@@ -1,72 +1,46 @@
-import os
-import time
-import json
-import hmac
-import hashlib
-from flask import Flask, request, abort
+from flask import Flask, request
+import stripe
 import requests
-from threading import Thread
-
-# Setări
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-STRIPE_SECRET = os.getenv("STRIPE_SECRET")
-TELEGRAM_GROUP_ID = os.getenv("TELEGRAM_GROUP_ID")
-WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
+import os
 
 app = Flask(__name__)
-abonati = {}  # user_id: expire_timestamp
 
-def trimite_mesaj(user_id, text):
-    requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", data={
-        "chat_id": user_id,
-        "text": text
-    })
+# Variabile de configurare – înlocuiește cu valorile tale reale
+TELEGRAM_BOT_TOKEN = "TOKENUL_TAU_TELEGRAM"
+TELEGRAM_CHAT_ID = "CHAT_ID_UL_TAU"  # sau îl extragem din update
+STRIPE_SECRET = "sk_test_XXXX..."  # cheia ta Stripe (test)
+ENDPOINT_SECRET = "whsec_XXXX..."  # semnătura webhook Stripe
 
-def adauga_in_grup(user_id):
-    requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/inviteChatMember", json={
-        "chat_id": TELEGRAM_GROUP_ID,
-        "user_id": user_id
-    })
+stripe.api_key = STRIPE_SECRET
+
+@app.route("/")
+def index():
+    return "Bot Telegram + Stripe este online!"
 
 @app.route("/webhook", methods=["POST"])
-def webhook():
+def webhook_received():
     payload = request.data
-    sig_header = request.headers.get('Stripe-Signature')
+    sig_header = request.headers.get("Stripe-Signature")
+
     try:
-        event = json.loads(payload)
-        if sig_header:
-            expected_sig = hmac.new(WEBHOOK_SECRET.encode(), payload, hashlib.sha256).hexdigest()
-            if not hmac.compare_digest(expected_sig, sig_header.split(',')[1].split('=')[1]):
-                abort(400)
+        event = stripe.Webhook.construct_event(payload, sig_header, ENDPOINT_SECRET)
+    except stripe.error.SignatureVerificationError:
+        return "Semnătura Stripe invalidă", 400
 
-        if event['type'] == 'checkout.session.completed':
-            metadata = event['data']['object']['metadata']
-            user_id = int(metadata['telegram_id'])
-            expire = int(time.time()) + 30 * 86400
-            abonati[user_id] = expire
-            adauga_in_grup(user_id)
-            trimite_mesaj(user_id, "✅ Ai fost adăugat pentru 30 de zile.")
-        return '', 200
-    except Exception as e:
-        print(e)
-        return '', 400
+    if event["type"] == "checkout.session.completed":
+        session = event["data"]["object"]
+        mesaj = f"✅ Plată nouă de la {session.get('customer_email')} — suma: {session['amount_total'] / 100:.2f} {session['currency'].upper()}"
+        send_telegram_message(mesaj)
 
-@app.route("/start", methods=["GET"])
-def start():
-    return "Botul e pornit!"
+    return "OK", 200
 
-def monitorizare_expirari():
-    while True:
-        acum = int(time.time())
-        for user_id, expira in list(abonati.items()):
-            if acum > expira:
-                requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/kickChatMember", data={
-                    "chat_id": TELEGRAM_GROUP_ID,
-                    "user_id": user_id
-                })
-                del abonati[user_id]
-        time.sleep(3600)
+def send_telegram_message(text):
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": text
+    }
+    requests.post(url, data=payload)
 
 if __name__ == "__main__":
-    Thread(target=monitorizare_expirari).start()
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+    app.run(debug=True)
