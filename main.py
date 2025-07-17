@@ -1,45 +1,77 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request
+import json
 import requests
+import time
 import hmac
 import hashlib
-import os
 
 app = Flask(__name__)
 
-# === Configurare ===
-BOT_TOKEN = "7718252241:AAHobde74C26V4RlRT1EW9n0Z0gIsZvrxcA"
-CHAT_ID = "8016135463"
-WEBHOOK_SECRET = "whsec_WHN49X87H31jMtKEwGh01GrIhJoWu1wo"
+# 🔐 Cheia secretă Stripe Webhook
+STRIPE_WEBHOOK_SECRET = 'whsec_WHN49X87H31jMtKEwGh01GrIhJoWu1wo'
 
-def send_telegram(text):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": CHAT_ID,
-        "text": text,
-        "parse_mode": "HTML"
+# 🤖 Token Telegram Bot
+TELEGRAM_BOT_TOKEN = '7718252241:AAHobde74C26V4RlRT1EW9n0Z0gIsZvrxcA'
+
+# 📩 ID-ul tău personal de Telegram
+TELEGRAM_CHAT_ID = '8016135463'
+
+# 📎 Link public de plată Stripe
+STRIPE_LINK = 'https://buy.stripe.com/7sYbIU5vM6L0bwterz8so00'
+
+# 🧠 Mesaj trimis la abonare
+WELCOME_MESSAGE = (
+    "✅ Abonamentul tău a fost confirmat cu succes!\n\n"
+    "🎉 Bine ai venit în grupul privat ESCORTE-ROMÂNIA❌️❌️❌️.\n\n"
+    "📎 Dacă nu ești deja în grup, contactează @EscorteRO_bot pentru acces.\n\n"
+    "⏳ Abonamentul este valabil 30 de zile. Mulțumim!"
+)
+
+# ✅ Verificare semnătură Stripe
+def verify_stripe_signature(payload, sig_header):
+    expected_sig = hmac.new(
+        STRIPE_WEBHOOK_SECRET.encode(),
+        payload,
+        hashlib.sha256
+    ).hexdigest()
+    return expected_sig in sig_header
+
+# 📩 Trimite mesaj pe Telegram
+def send_telegram_message(text):
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    data = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": text
     }
-    requests.post(url, data=payload)
+    try:
+        response = requests.post(url, json=data)
+        print("Trimis pe Telegram:", response.text)
+    except Exception as e:
+        print("Eroare la trimitere Telegram:", e)
 
-@app.route("/webhook", methods=["POST"])
+# 🎯 Endpoint-ul webhook Stripe
+@app.route('/webhook', methods=['POST'])
 def stripe_webhook():
     payload = request.data
-    sig_header = request.headers.get("Stripe-Signature")
+    sig_header = request.headers.get('Stripe-Signature', '')
 
-    # ✅ Verificare semnătură
+    # Dacă semnătura nu e validă, ignorăm
+    if STRIPE_WEBHOOK_SECRET and not verify_stripe_signature(payload, sig_header):
+        return 'Invalid signature', 400
+
     try:
-        event = request.get_json()
+        event = json.loads(payload)
+
+        if event['type'] == 'checkout.session.completed':
+            send_telegram_message(WELCOME_MESSAGE)
+            return '', 200
+
     except Exception as e:
-        return jsonify({"error": "Invalid payload"}), 400
+        print("Eroare în procesare:", e)
+        return 'Error', 400
 
-    if event.get("type") == "checkout.session.completed":
-        session = event["data"]["object"]
-        email = session.get("customer_email", "Fără email")
-        amount = session.get("amount_total", 0) / 100
+    return '', 200
 
-        message = f"✅ <b>Plată Stripe confirmată</b>\n\n👤 Email: {email}\n💸 Suma: {amount:.2f} EUR"
-        send_telegram(message)
-
-    return jsonify({"status": "received"}), 200
-
-if __name__ == "__main__":
-    app.run(port=5000)
+# 🔥 Pornim serverul pe 0.0.0.0:5000 pentru Render
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000)
