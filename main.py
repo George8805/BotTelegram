@@ -1,46 +1,20 @@
-from flask import Flask, request
-import stripe
 import requests
-import os
+import time
 
-app = Flask(__name__)
+BOT_TOKEN = "7718252241:AAFUjt2e0383S6mz3kcHtfm1kXw5aYHOm5c"
 
-# Variabile de configurare – înlocuiește cu valorile tale reale
-TELEGRAM_BOT_TOKEN = "TOKENUL_TAU_TELEGRAM"
-TELEGRAM_CHAT_ID = "CHAT_ID_UL_TAU"  # sau îl extragem din update
-STRIPE_SECRET = "sk_test_XXXX..."  # cheia ta Stripe (test)
-ENDPOINT_SECRET = "whsec_XXXX..."  # semnătura webhook Stripe
+def get_updates():
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates"
+    response = requests.get(url)
+    return response.json()
 
-stripe.api_key = STRIPE_SECRET
-
-@app.route("/")
-def index():
-    return "Bot Telegram + Stripe este online!"
-
-@app.route("/webhook", methods=["POST"])
-def webhook_received():
-    payload = request.data
-    sig_header = request.headers.get("Stripe-Signature")
-
-    try:
-        event = stripe.Webhook.construct_event(payload, sig_header, ENDPOINT_SECRET)
-    except stripe.error.SignatureVerificationError:
-        return "Semnătura Stripe invalidă", 400
-
-    if event["type"] == "checkout.session.completed":
-        session = event["data"]["object"]
-        mesaj = f"✅ Plată nouă de la {session.get('customer_email')} — suma: {session['amount_total'] / 100:.2f} {session['currency'].upper()}"
-        send_telegram_message(mesaj)
-
-    return "OK", 200
-
-def send_telegram_message(text):
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": text
-    }
-    requests.post(url, data=payload)
+def extract_chat_id():
+    updates = get_updates()
+    if "result" in updates and len(updates["result"]) > 0:
+        chat = updates["result"][-1]["message"]["chat"]
+        print(f"Chat ID-ul tău este: {chat['id']}")
+    else:
+        print("Trimite un mesaj botului tău în Telegram și apoi rulează din nou scriptul.")
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    extract_chat_id()
