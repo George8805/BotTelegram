@@ -1,20 +1,18 @@
-
 from flask import Flask, request
 import json
 import requests
+import time
 import hmac
 import hashlib
+import os
 
 app = Flask(__name__)
 
 # 🔐 Cheia secretă Stripe Webhook
 STRIPE_WEBHOOK_SECRET = 'whsec_IJjzBmzaddtcS7Qq55TWvgVRBhlLZwb7'
 
-# 🔑 Cheia secretă Stripe LIVE (pentru extensii viitoare)
-STRIPE_SECRET_KEY = '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'
-
 # 🤖 Token Telegram Bot
-TELEGRAM_BOT_TOKEN = '7718252241:AAFUjt2e0383S6mz3kcHtFm1kXw5aYHOm5c'
+TELEGRAM_BOT_TOKEN = '7718252241:AAHobde74C26V4RlRT1EW9n0Z0gIsZvrxcA'
 
 # 📩 ID-ul tău personal de Telegram
 TELEGRAM_CHAT_ID = '8016135463'
@@ -58,7 +56,6 @@ def stripe_webhook():
     payload = request.data
     sig_header = request.headers.get('Stripe-Signature', '')
 
-    # Dacă semnătura nu e validă, ignorăm
     if STRIPE_WEBHOOK_SECRET and not verify_stripe_signature(payload, sig_header):
         return 'Invalid signature', 400
 
@@ -75,6 +72,6 @@ def stripe_webhook():
 
     return '', 200
 
-# Pornirea serverului local (doar pentru teste)
+# 🟢 Pornire server Flask pe Render
 if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
