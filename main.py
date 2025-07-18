@@ -8,7 +8,7 @@ import hashlib
 app = Flask(__name__)
 
 # 🔐 Cheia secretă Stripe Webhook
-STRIPE_WEBHOOK_SECRET = 'whsec_WHN49X87H31jMtKEwGh01GrIhJoWu1wo'
+STRIPE_WEBHOOK_SECRET = 'whsec_IJjzBmzaddtcS7Qq55TWvgVRBhlLZwb7'
 
 # 🤖 Token Telegram Bot
 TELEGRAM_BOT_TOKEN = '7718252241:AAHobde74C26V4RlRT1EW9n0Z0gIsZvrxcA'
@@ -17,7 +17,7 @@ TELEGRAM_BOT_TOKEN = '7718252241:AAHobde74C26V4RlRT1EW9n0Z0gIsZvrxcA'
 TELEGRAM_CHAT_ID = '8016135463'
 
 # 📎 Link public de plată Stripe
-STRIPE_LINK = 'https://buy.stripe.com/7sYbIU5vM6L0bwterz8so00'
+STRIPE_LINK = 'https://buy.stripe.com/5kQfZggXj4ZR94vgUfes000'
 
 # 🧠 Mesaj trimis la abonare
 WELCOME_MESSAGE = (
