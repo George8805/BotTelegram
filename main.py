@@ -1,7 +1,7 @@
+
 from flask import Flask, request
 import json
 import requests
-import time
 import hmac
 import hashlib
 
@@ -10,8 +10,11 @@ app = Flask(__name__)
 # 🔐 Cheia secretă Stripe Webhook
 STRIPE_WEBHOOK_SECRET = 'whsec_IJjzBmzaddtcS7Qq55TWvgVRBhlLZwb7'
 
+# 🔑 Cheia secretă Stripe LIVE (pentru extensii viitoare)
+STRIPE_SECRET_KEY = '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'
+
 # 🤖 Token Telegram Bot
-TELEGRAM_BOT_TOKEN = '7718252241:AAHobde74C26V4RlRT1EW9n0Z0gIsZvrxcA'
+TELEGRAM_BOT_TOKEN = '7718252241:AAFUjt2e0383S6mz3kcHtFm1kXw5aYHOm5c'
 
 # 📩 ID-ul tău personal de Telegram
 TELEGRAM_CHAT_ID = '8016135463'
@@ -72,6 +75,6 @@ def stripe_webhook():
 
     return '', 200
 
-# 🔥 Pornim serverul pe 0.0.0.0:5000 pentru Render
+# Pornirea serverului local (doar pentru teste)
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    app.run(debug=True, port=5000)
