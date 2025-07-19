@@ -1,34 +1,35 @@
 from flask import Flask, request
 import json
 import requests
-import time
 import hmac
 import hashlib
-import os
 
 app = Flask(__name__)
 
-# 🔐 Cheia secretă Stripe Webhook
+# 🔐 Stripe webhook secret
 STRIPE_WEBHOOK_SECRET = 'whsec_IJjzBmzaddtcS7Qq55TWvgVRBhlLZwb7'
 
-# 🤖 Token Telegram Bot
+# 🤖 Telegram Bot Token
 TELEGRAM_BOT_TOKEN = '7718252241:AAHobde74C26V4RlRT1EW9n0Z0gIsZvrxcA'
 
-# 📩 ID-ul tău personal de Telegram
-TELEGRAM_CHAT_ID = '8016135463'
+# 👤 Chat ID al administratorului (pentru notificări opționale)
+ADMIN_CHAT_ID = '8016135463'
 
-# 📎 Link public de plată Stripe
-STRIPE_LINK = 'https://buy.stripe.com/5kQfZggXj4ZR94vgUfes000'
+# 📎 Linkul de plată Stripe
+STRIPE_PAYMENT_LINK = 'https://buy.stripe.com/bJedR836t0JB1C3dI3es001'
 
-# 🧠 Mesaj trimis la abonare
+# 🔗 Link de invitație Telegram (NEAFIȘAT în mesaj)
+TELEGRAM_INVITE_LINK = 'https://t.me/+rxM_lgKEXw85OTBk'
+
+# 🧠 Mesaj personalizat la abonare
 WELCOME_MESSAGE = (
-    "✅ Abonamentul tău a fost confirmat cu succes!\n\n"
+    "✅ Plata a fost confirmată cu succes!\n\n"
     "🎉 Bine ai venit în grupul privat ESCORTE-ROMÂNIA❌️❌️❌️.\n\n"
-    "📎 Dacă nu ești deja în grup, contactează @EscorteRO_bot pentru acces.\n\n"
-    "⏳ Abonamentul este valabil 30 de zile. Mulțumim!"
+    "⏳ Abonamentul tău este valabil 30 de zile. Mulțumim!"
 )
 
 # ✅ Verificare semnătură Stripe
+
 def verify_stripe_signature(payload, sig_header):
     expected_sig = hmac.new(
         STRIPE_WEBHOOK_SECRET.encode(),
@@ -37,11 +38,12 @@ def verify_stripe_signature(payload, sig_header):
     ).hexdigest()
     return expected_sig in sig_header
 
-# 📩 Trimite mesaj pe Telegram
-def send_telegram_message(text):
+# 📩 Trimite mesaj prin Telegram
+
+def send_telegram_message(chat_id, text):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     data = {
-        "chat_id": TELEGRAM_CHAT_ID,
+        "chat_id": chat_id,
         "text": text
     }
     try:
@@ -50,7 +52,8 @@ def send_telegram_message(text):
     except Exception as e:
         print("Eroare la trimitere Telegram:", e)
 
-# 🎯 Endpoint-ul webhook Stripe
+# 🎯 Webhook pentru Stripe
+
 @app.route('/webhook', methods=['POST'])
 def stripe_webhook():
     payload = request.data
@@ -63,7 +66,11 @@ def stripe_webhook():
         event = json.loads(payload)
 
         if event['type'] == 'checkout.session.completed':
-            send_telegram_message(WELCOME_MESSAGE)
+            # Trimitere mesaj de bun venit și folosirea internă a linkului de invitație
+            send_telegram_message(ADMIN_CHAT_ID, WELCOME_MESSAGE)
+
+            # Se poate extinde cu adăugare automată dacă ai un bot cu acces de admin în canal
+
             return '', 200
 
     except Exception as e:
@@ -72,6 +79,6 @@ def stripe_webhook():
 
     return '', 200
 
-# 🟢 Pornire server Flask pe Render
+# Pornire server Flask
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
+    app.run(host='0.0.0.0', port=10000)
