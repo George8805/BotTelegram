@@ -1,11 +1,8 @@
 from flask import Flask, request
-import json
 import requests
-import time
+import json
 import hmac
 import hashlib
-
-app = Flask(__name__)
 
 # 🔐 Cheia secretă Stripe Webhook
 STRIPE_WEBHOOK_SECRET = 'whsec_1O4pbM0fh8addVmpd2fK4uifiQava33I'
@@ -13,21 +10,21 @@ STRIPE_WEBHOOK_SECRET = 'whsec_1O4pbM0fh8addVmpd2fK4uifiQava33I'
 # 🤖 Token Telegram Bot
 TELEGRAM_BOT_TOKEN = '7718252241:AAHobde74C26V4RlRT1EW9n0Z0gIsZvrxcA'
 
-# 📩 ID-ul tău personal de Telegram
+# 📩 ID-ul tău personal de Telegram (George)
 TELEGRAM_CHAT_ID = '8016135463'
-
-# 🔗 Link de invitație către canal (nu se afișează, se folosește în fundal)
-TELEGRAM_CHANNEL_INVITE = 'https://t.me/+rxM_lgKEXw85OTBk'
 
 # 🧠 Mesaj trimis la abonare
 WELCOME_MESSAGE = (
     "✅ Abonamentul tău a fost confirmat cu succes!\n\n"
     "🎉 Bine ai venit în grupul privat ESCORTE-ROMÂNIA❌️❌️❌️.\n\n"
-    "📎 Accesează grupul: {link}\n\n"
+    "📎 Accesează grupul aici: https://t.me/+rxM_lgKEXw85OTBk\n\n"
     "⏳ Abonamentul este valabil 30 de zile. Mulțumim!"
 )
 
-# ✅ Verificare semnătură Stripe
+# Inițializează aplicația Flask
+app = Flask(__name__)
+
+# 🔒 Verificare semnătură Stripe
 
 def verify_stripe_signature(payload, sig_header):
     expected_sig = hmac.new(
@@ -51,7 +48,7 @@ def send_telegram_message(text):
     except Exception as e:
         print("Eroare la trimitere Telegram:", e)
 
-# 🎯 Webhook Stripe
+# 🎯 Endpoint-ul webhook Stripe
 
 @app.route('/webhook', methods=['POST'])
 def stripe_webhook():
@@ -65,8 +62,7 @@ def stripe_webhook():
         event = json.loads(payload)
 
         if event['type'] == 'checkout.session.completed':
-            message = WELCOME_MESSAGE.format(link=TELEGRAM_CHANNEL_INVITE)
-            send_telegram_message(message)
+            send_telegram_message(WELCOME_MESSAGE)
             return '', 200
 
     except Exception as e:
@@ -75,6 +71,6 @@ def stripe_webhook():
 
     return '', 200
 
-# Pornire server local (doar pt testare locală)
+# 🟢 Rulează aplicația Flask pe portul 10000
 if __name__ == '__main__':
-    app.run(port=10000)
+    app.run(host='0.0.0.0', port=10000)
