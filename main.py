@@ -11,15 +11,15 @@ import requests
 import time
 
 # ---------------- CONFIG ----------------
-TELEGRAM_TOKEN = "TOKEN_BOT"
-STRIPE_SECRET_KEY = "sk_test_CHEIA_TA"
-STRIPE_WEBHOOK_SECRET = "whsec_CHEIA_TA"
-GROUP_CHAT_ID = -1002577679941  # ID-ul grupului tău
+TELEGRAM_TOKEN = "8285233635:AAEmE6IsunZ8AXVxJ2iVh5fa-mY0ppoKcgQ"
+STRIPE_SECRET_KEY = "sk_test_51RmH5NCFUXMdgQRziwrLse45qn00G24mL7ZYt1aEwiB9wFCTJUNcw9g8YLnVZY3k0VyQAKJdmGI0bnWa4og8qfYG00uTJvHUMQ"
+STRIPE_WEBHOOK_SECRET = "whsec_S7AvDmiroK8REpBwWljjHY6p6ZCIsLGV"
+GROUP_CHAT_ID = -1002577679941
 
 PRODUCT_NAME = "Abonament Premium 30 zile"
 PRICE_RON = 25
-SUCCESS_URL = "https://t.me/numele_botului"
-CANCEL_URL = "https://t.me/numele_botului"
+SUCCESS_URL = "https://t.me/EscorteRO1_bot"
+CANCEL_URL = "https://t.me/EscorteRO1_bot"
 ABONAMENTE_FILE = "abonamente.json"
 
 stripe.api_key = STRIPE_SECRET_KEY
