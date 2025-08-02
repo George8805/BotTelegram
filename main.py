@@ -1,26 +1,22 @@
 import stripe
 import logging
-import json
-import os
 from datetime import datetime, timedelta
 from flask import Flask, request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 import threading
+import json
+import os
+import secrets
 import requests
-import time
 
 # ---------------- CONFIG ----------------
 TELEGRAM_TOKEN = "8285233635:AAEmE6IsunZ8AXVxJ2iVh5fa-mY0ppoKcgQ"
 STRIPE_SECRET_KEY = "sk_test_51RmH5NCFUXMdgQRziwrLse45qn00G24mL7ZYt1aEwiB9wFCTJUNcw9g8YLnVZY3k0VyQAKJdmGI0bnWa4og8qfYG00uTJvHUMQ"
 STRIPE_WEBHOOK_SECRET = "whsec_BBSUbBVkatYXc9SHUdQXPKFm5YhOE2fI"
-GROUP_CHAT_ID = -1002577679941
-
 PRODUCT_NAME = "Abonament Premium 30 zile"
 PRICE_RON = 25
-SUCCESS_URL = "https://t.me/EscorteRO1_bot"
-CANCEL_URL = "https://t.me/EscorteRO1_bot"
-ABONAMENTE_FILE = "abonamente.json"
+GROUP_ID = -1002577679941  # ID grup privat
 
 stripe.api_key = STRIPE_SECRET_KEY
 
@@ -28,59 +24,44 @@ stripe.api_key = STRIPE_SECRET_KEY
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ---------------- FUNCȚII UTILE ----------------
-def load_abonamente():
-    if not os.path.exists(ABONAMENTE_FILE):
-        return {}
-    with open(ABONAMENTE_FILE, "r") as f:
+# ---------------- FIȘIER ABONAȚI ----------------
+abonati_file = "abonati.json"
+if not os.path.exists(abonati_file):
+    with open(abonati_file, "w") as f:
+        json.dump({}, f)
+
+def load_abonati():
+    with open(abonati_file, "r") as f:
         return json.load(f)
 
-def save_abonamente(data):
-    with open(ABONAMENTE_FILE, "w") as f:
-        json.dump(data, f, indent=4)
+def save_abonati(data):
+    with open(abonati_file, "w") as f:
+        json.dump(data, f)
 
-def abonament_activ(chat_id):
-    abonamente = load_abonamente()
-    if str(chat_id) in abonamente:
-        expira_str = abonamente[str(chat_id)]
-        expira = datetime.strptime(expira_str, "%Y-%m-%d %H:%M:%S")
-        return expira > datetime.now()
-    return False
+# ---------------- FUNCȚII LINK ----------------
+def generate_invite_link():
+    token = secrets.token_urlsafe(8)
+    expire_date = datetime.now() + timedelta(hours=1)
+    r = requests.post(
+        f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/createChatInviteLink",
+        json={
+            "chat_id": GROUP_ID,
+            "expire_date": int(expire_date.timestamp()),
+            "member_limit": 1,
+            "name": f"Access-{token}"
+        }
+    )
+    data = r.json()
+    return data.get("result", {}).get("invite_link")
 
-def seteaza_abonament(chat_id):
-    abonamente = load_abonamente()
-    expira = datetime.now() + timedelta(days=30)
-    abonamente[str(chat_id)] = expira.strftime("%Y-%m-%d %H:%M:%S")
-    save_abonamente(abonamente)
-    return expira
-
-def create_group_invite_link():
-    expire_time = int(time.time()) + 3600  # 1 oră
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/createChatInviteLink"
-    payload = {
-        "chat_id": GROUP_CHAT_ID,
-        "expire_date": expire_time,
-        "member_limit": 1
-    }
-    r = requests.post(url, json=payload)
-    if r.status_code == 200 and r.json().get("ok"):
-        return r.json()["result"]["invite_link"]
-    else:
-        logger.error(f"Eroare creare link: {r.text}")
-        return None
-
-def send_telegram_message(chat_id, text):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
-    requests.post(url, json=payload)
-
-# ---------------- FLASK APP PENTRU STRIPE WEBHOOK ----------------
+# ---------------- FLASK APP ----------------
 app = Flask(__name__)
 
 @app.route("/stripe-webhook", methods=["POST"])
 def stripe_webhook():
     payload = request.data
     sig_header = request.headers.get("Stripe-Signature")
+
     try:
         event = stripe.Webhook.construct_event(payload, sig_header, STRIPE_WEBHOOK_SECRET)
     except Exception as e:
@@ -89,46 +70,48 @@ def stripe_webhook():
     if event["type"] == "checkout.session.completed":
         session = event["data"]["object"]
         chat_id = session.get("metadata", {}).get("telegram_chat_id")
-        if chat_id:
-            # Activează abonament
-            expira = seteaza_abonament(chat_id)
-            confirm_text = (
-                f"✅ Plata confirmată!\n\n"
-                f"📅 Abonamentul tău este activ până la **{expira.strftime('%d.%m.%Y')}**."
-            )
-            send_telegram_message(chat_id, confirm_text)
 
-            # Creează link unic și trimite
-            invite_link = create_group_invite_link()
-            if invite_link:
-                send_telegram_message(chat_id, f"🔗 Intră în grup (link unic, valabil 1 oră / 1 utilizare):\n{invite_link}")
+        if chat_id:
+            abonati = load_abonati()
+            expiry_date = (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d %H:%M:%S")
+            abonati[str(chat_id)] = expiry_date
+            save_abonati(abonati)
+
+            link = generate_invite_link()
+            if link:
+                text = f"✅ Plata confirmată!\n📅 Abonament activ până la {expiry_date}\n\n🔗 Intră în grup aici: {link}"
+            else:
+                text = "✅ Plata confirmată, dar nu am putut genera linkul de acces."
+
+            send_telegram_message(chat_id, text)
 
     return "✅ Webhook received", 200
 
-# ---------------- COMANDA /id ----------------
-async def get_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    await update.message.reply_text(f"📌 Chat ID: `{chat_id}`", parse_mode="Markdown")
+def send_telegram_message(chat_id, text):
+    requests.post(
+        f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+        json={"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
+    )
 
-# ---------------- COMANDA /start ----------------
+# ---------------- TELEGRAM BOT ----------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
+    abonati = load_abonati()
 
-    # Dacă are abonament activ → trimite direct link unic
-    if abonament_activ(chat_id):
-        invite_link = create_group_invite_link()
-        if invite_link:
-            await update.message.reply_text(f"🔗 Abonament activ!\nIntră în grup:\n{invite_link}")
-        else:
-            await update.message.reply_text("⚠️ Eroare creare link!")
-        return
+    if str(chat_id) in abonati:
+        exp_date = datetime.strptime(abonati[str(chat_id)], "%Y-%m-%d %H:%M:%S")
+        if exp_date > datetime.now():
+            link = generate_invite_link()
+            await update.message.reply_text(
+                f"✅ Ai abonament activ până la {exp_date.strftime('%d.%m.%Y')}!\n🔗 Intră în grup aici: {link}"
+            )
+            return
 
-    # Altfel → oferă plată
     text = (
         "Bună,\n\n"
-        "⭐ Aici vei găsi conținut premium și leaks.\n"
-        f"⭐ Abonament: {PRICE_RON} RON pentru 30 zile.\n"
-        "⭐ Click pe buton pentru a plăti."
+        "⭐ Aici veți găsi conținut premium și leaks.\n"
+        f"⭐ Un abonament costă {PRICE_RON} RON pentru 30 de zile.\n"
+        "⭐ Click pe butonul de mai jos pentru plată."
     )
 
     session = stripe.checkout.Session.create(
@@ -142,8 +125,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "quantity": 1
         }],
         mode="payment",
-        success_url=SUCCESS_URL,
-        cancel_url=CANCEL_URL,
+        success_url="https://t.me/EscorteRO1_bot",
+        cancel_url="https://t.me/EscorteRO1_bot",
         metadata={"telegram_chat_id": str(chat_id)}
     )
 
@@ -151,7 +134,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(text, reply_markup=reply_markup)
 
-# ---------------- RULEAZĂ BOT + FLASK ----------------
+# ---------------- RULEAZĂ ----------------
 def run_flask():
     app.run(host="0.0.0.0", port=5000)
 
@@ -159,5 +142,4 @@ if __name__ == "__main__":
     threading.Thread(target=run_flask).start()
     app_telegram = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app_telegram.add_handler(CommandHandler("start", start))
-    app_telegram.add_handler(CommandHandler("id", get_id))
     app_telegram.run_polling()
