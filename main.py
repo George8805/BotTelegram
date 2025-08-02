@@ -19,7 +19,7 @@ SUCCESS_URL = "https://t.me/numele_botului"
 CANCEL_URL = "https://t.me/numele_botului"
 
 # ID-ul grupului (îl afli cu /id din grup)
-GROUP_CHAT_ID = -1001234567890  # schimbă cu chat_id-ul real al grupului tău
+GROUP_CHAT_ID = -1002577679941  # schimbă cu chat_id-ul real al grupului tău
 
 stripe.api_key = STRIPE_SECRET_KEY
 
