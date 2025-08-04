@@ -20,7 +20,7 @@ SUCCESS_URL = "https://t.me/+rK1HDp49LEIyYmRk"
 CANCEL_URL = "https://t.me/+rK1HDp49LEIyYmRk"
 
 # ID-ul grupului Telegram (grupul tău privat)
-GROUP_CHAT_ID = -1002338269457  # aici e ID-ul real al grupului tău
+GROUP_CHAT_ID = -1002577679941
 
 # Fisier pentru stocarea abonamentelor
 SUBSCRIPTIONS_FILE = "subscriptions.json"
@@ -48,19 +48,21 @@ def send_telegram_message(chat_id, text):
     requests.post(url, json=payload)
 
 def remove_user_from_group(user_id):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/kickChatMember"
+    """Remove fără ban real (ban expirat imediat)"""
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/banChatMember"
     payload = {
         "chat_id": GROUP_CHAT_ID,
-        "user_id": user_id
+        "user_id": user_id,
+        "until_date": int(time.time()) + 1  # ban expira în 1 secundă
     }
-    requests.post(url, json=payload)
+    r = requests.post(url, json=payload)
+    logger.info(f"Remove user {user_id} -> {r.text}")
 
 def create_permanent_invite_link():
     """Creează un link permanent de invitație în grup"""
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/createChatInviteLink"
     payload = {
         "chat_id": GROUP_CHAT_ID
-        # fără expire_date și fără member_limit => permanent
     }
     r = requests.post(url, json=payload)
     if r.status_code == 200 and r.json().get("ok"):
