@@ -7,8 +7,6 @@ from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 import threading
 import requests
 import time
-import json
-import os
 
 # ---------------- CONFIG ----------------
 TELEGRAM_TOKEN = "8285233635:AAEmE6IsunZ8AXVxJ2iVh5fa-mY0ppoKcgQ"
@@ -16,60 +14,48 @@ STRIPE_SECRET_KEY = "sk_test_51RmH5NCFUXMdgQRziwrLse45qn00G24mL7ZYt1aEwiB9wFCTJU
 STRIPE_WEBHOOK_SECRET = "whsec_S7AvDmiroK8REpBwWljjHY6p6ZCIsLGV"
 PRODUCT_NAME = "Abonament Premium Test"
 PRICE_RON = 25
-SUCCESS_URL = "https://t.me/+rK1HDp49LEIyYmRk"
-CANCEL_URL = "https://t.me/+rK1HDp49LEIyYmRk"
+SUCCESS_URL = "https://t.me/EscorteRO_bot"
+CANCEL_URL = "https://t.me/EscorteRO_bot"
 
-# ID-ul grupului Telegram (grupul tău privat)
+# Grupul tău
 GROUP_CHAT_ID = -1002577679941
+INVITE_LINK = "https://t.me/+rK1HDp49LEIyYmRk"
 
-# Fisier pentru stocarea abonamentelor
-SUBSCRIPTIONS_FILE = "subscriptions.json"
-
+# Stripe API key
 stripe.api_key = STRIPE_SECRET_KEY
 
 # ---------------- LOGGING ----------------
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ---------------- HELPER FUNCTIONS ----------------
-def load_subscriptions():
-    if os.path.exists(SUBSCRIPTIONS_FILE):
-        with open(SUBSCRIPTIONS_FILE, "r") as f:
-            return json.load(f)
-    return {}
-
-def save_subscriptions(data):
-    with open(SUBSCRIPTIONS_FILE, "w") as f:
-        json.dump(data, f)
-
+# ---------------- FUNCȚII HELPER ----------------
 def send_telegram_message(chat_id, text):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
     requests.post(url, json=payload)
 
-def remove_user_from_group(user_id):
-    """Remove fără ban real (ban expirat imediat)"""
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/banChatMember"
-    payload = {
-        "chat_id": GROUP_CHAT_ID,
-        "user_id": user_id,
-        "until_date": int(time.time()) + 1  # ban expira în 1 secundă
-    }
-    r = requests.post(url, json=payload)
-    logger.info(f"Remove user {user_id} -> {r.text}")
+def kick_and_unban(user_id):
+    """Remove fără ban permanent"""
+    logger.info(f"🛑 Scoatem user {user_id} din grup...")
+    # kick
+    requests.post(
+        f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/kickChatMember",
+        json={"chat_id": GROUP_CHAT_ID, "user_id": user_id}
+    )
+    time.sleep(1)  # așteaptă 1 sec
+    # unban imediat
+    requests.post(
+        f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/unbanChatMember",
+        json={"chat_id": GROUP_CHAT_ID, "user_id": user_id}
+    )
+    logger.info(f"✅ User {user_id} scos și debanat.")
 
-def create_permanent_invite_link():
-    """Creează un link permanent de invitație în grup"""
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/createChatInviteLink"
-    payload = {
-        "chat_id": GROUP_CHAT_ID
-    }
-    r = requests.post(url, json=payload)
-    if r.status_code == 200 and r.json().get("ok"):
-        return r.json()["result"]["invite_link"]
-    else:
-        logger.error(f"Eroare creare link: {r.text}")
-        return None
+def schedule_kick(user_id, delay_seconds):
+    """Rulează kick după X secunde"""
+    def task():
+        time.sleep(delay_seconds)
+        kick_and_unban(user_id)
+    threading.Thread(target=task, daemon=True).start()
 
 # ---------------- FLASK APP ----------------
 app = Flask(__name__)
@@ -82,6 +68,7 @@ def stripe_webhook():
     try:
         event = stripe.Webhook.construct_event(payload, sig_header, STRIPE_WEBHOOK_SECRET)
     except Exception as e:
+        logger.error(f"⚠️ Webhook error: {str(e)}")
         return f"⚠️ Webhook error: {str(e)}", 400
 
     if event["type"] == "checkout.session.completed":
@@ -89,28 +76,17 @@ def stripe_webhook():
         chat_id = session.get("metadata", {}).get("telegram_chat_id")
 
         if chat_id:
-            # abonament test 1 minut
-            expiry_date = datetime.now() + timedelta(minutes=1)
-            subs = load_subscriptions()
-            subs[str(chat_id)] = {
-                "expiry": expiry_date.strftime("%Y-%m-%d %H:%M:%S"),
-                "user_id": chat_id
-            }
-            save_subscriptions(subs)
-
-            # mesaj confirmare
-            send_telegram_message(chat_id, f"✅ Plata confirmată! Abonamentul tău este activ până la {expiry_date.strftime('%H:%M:%S')}.")
-
-            # link permanent
-            invite_link = create_permanent_invite_link()
-            if invite_link:
-                send_telegram_message(chat_id, f"🔗 Intră în grup: {invite_link}")
+            logger.info(f"💰 Plata confirmată pentru {chat_id}")
+            send_telegram_message(chat_id, f"✅ Plata confirmată! Abonamentul tău este activ pentru 1 minut.\n\nIntră în grup aici: {INVITE_LINK}")
+            schedule_kick(int(chat_id), 60)  # scoate după 1 minut
 
     return "✅ Webhook received", 200
 
-# ---------------- TELEGRAM BOT ----------------
+# ---------------- BOT TELEGRAM ----------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
+    logger.info(f"📩 Comanda /start de la {chat_id}")
+
     text = (
         "Bună,\n\n"
         f"⭐ Abonament test: {PRICE_RON} RON / 1 minut.\n"
@@ -137,32 +113,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(text, reply_markup=reply_markup)
 
-# ---------------- JOB DE VERIFICARE ----------------
-def check_expired_subscriptions():
-    while True:
-        subs = load_subscriptions()
-        changed = False
-        for chat_id, data in list(subs.items()):
-            expiry = datetime.strptime(data["expiry"], "%Y-%m-%d %H:%M:%S")
-            if datetime.now() > expiry:
-                try:
-                    remove_user_from_group(int(chat_id))
-                    send_telegram_message(chat_id, "❌ Abonamentul tău a expirat. Pentru a reveni, plătește din nou.")
-                except Exception as e:
-                    logger.error(f"Eroare la eliminare utilizator {chat_id}: {e}")
-                del subs[chat_id]
-                changed = True
-        if changed:
-            save_subscriptions(subs)
-        time.sleep(10)  # verificare la 10 secunde (pentru test)
-
 # ---------------- RULEAZĂ ----------------
 def run_flask():
     app.run(host="0.0.0.0", port=5000)
 
 if __name__ == "__main__":
     threading.Thread(target=run_flask).start()
-    threading.Thread(target=check_expired_subscriptions, daemon=True).start()
     app_telegram = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app_telegram.add_handler(CommandHandler("start", start))
     app_telegram.run_polling()
