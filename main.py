@@ -8,15 +8,13 @@ from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 import threading
 
 # ---------------- CONFIG ----------------
-TELEGRAM_TOKEN = "8285233635:AAEmE6IsunZ8AXVxJ2iVh5fa-mY0ppoKcgQ"
-
-# Stripe Test Keys
-STRIPE_SECRET_KEY = "sk_test_51RmH5NCFUXMdgQRziwrLse45qn00G24mL7ZYt1aEwiB9wFCTJUNCw9g8YLnVZY3k0VyQAKJdmGI0bnWa4og8qfYG00uTJvHUMQ"
-STRIPE_WEBHOOK_SECRET = "whsec_BA81U3PLjHmfYQEgdwcss3FA1fUxMJ1a"
+TELEGRAM_TOKEN = "7718252241:AAHobde74C26V4RlRT1EW9n0Z0gIsZvrxcA"
+STRIPE_SECRET_KEY = "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"
+STRIPE_WEBHOOK_SECRET = "whsec_LxOkuricKYEikXru9KjQje65g4MNapK9"
 
 GROUP_CHAT_ID = -1002577679941  # Grup ESCORTE-ROMÂNIA❌️❌️❌️
 INVITE_LINK = "https://t.me/+rK1HDp49LEIyYmRk"  # Link permanent de grup
-PRICE_ID = "price_1RsNMwCFUXMdgQRzVlmVTBut"  # Price ID Test Mode
+PRICE_ID = "price_1RsNMwCFUXMdgQRzVlmVTBut"  # Abonament lunar Stripe
 
 stripe.api_key = STRIPE_SECRET_KEY
 
@@ -43,12 +41,14 @@ def add_user_to_group(user_id):
     send_message(user_id, mesaj_intampinare)
 
 def remove_user_from_group(user_id):
+    # Kick
     kick_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/kickChatMember"
     requests.post(kick_url, json={
         "chat_id": GROUP_CHAT_ID,
         "user_id": user_id,
         "until_date": int(datetime.now().timestamp()) + 60
     })
+    # Unban
     unban_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/unbanChatMember"
     requests.post(unban_url, json={
         "chat_id": GROUP_CHAT_ID,
@@ -94,7 +94,7 @@ def stripe_webhook():
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
 
-    # Creează sesiunea Stripe pentru abonament lunar (Test Mode)
+    # Creează sesiunea Stripe pentru abonament lunar
     session = stripe.checkout.Session.create(
         payment_method_types=["card"],
         line_items=[{"price": PRICE_ID, "quantity": 1}],
@@ -104,7 +104,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         metadata={"telegram_chat_id": str(chat_id)}
     )
 
-    keyboard = [[InlineKeyboardButton("💳 Plătește abonamentul lunar (TEST)", url=session.url)]]
+    keyboard = [[InlineKeyboardButton("💳 Plătește abonamentul lunar", url=session.url)]]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     await update.message.reply_text(
