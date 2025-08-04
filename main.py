@@ -1,124 +1,124 @@
 import stripe
 import logging
-import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from flask import Flask, request
+import requests
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 import threading
-import requests
 
 # ---------------- CONFIG ----------------
-TELEGRAM_TOKEN = "8285233635:AAEmE6IsunZ8AXVxJ2iVh5fa-mY0ppoKcgQ"
-STRIPE_SECRET_KEY = "sk_test_51RmH5NCFUXMdgQRziwrLse45qn00G24mL7ZYt1aEwiB9wFCTJUNcw9g8YLnVZY3k0VyQAKJdmGI0bnWa4og8qfYG00uTJvHUMQ"
-STRIPE_WEBHOOK_SECRET = "whsec_S7AvDmiroK8REpBwWljjHY6p6ZCIsLGV"
-PRODUCT_NAME = "Abonament Premium Test"
-PRICE_RON = 25
+TELEGRAM_TOKEN = "7718252241:AAHobde74C26V4RlRT1EW9n0Z0gIsZvrxcA"
+STRIPE_SECRET_KEY = "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"
+STRIPE_WEBHOOK_SECRET = "whsec_LxOkuricKYEikXru9KjQje65g4MNapK9"
 
-SUCCESS_URL = "https://t.me/+rK1HDp49LEIyYmRk"  # linkul grupului tău
-CANCEL_URL = "https://t.me/EscorteRO_bot"       # link fallback
-
-GROUP_CHAT_ID = -1002577679941
-INVITE_LINK = "https://t.me/+rK1HDp49LEIyYmRk"  # același link static
+GROUP_CHAT_ID = -1002577679941  # Grup ESCORTE-ROMÂNIA❌️❌️❌️
+INVITE_LINK = "https://t.me/+rK1HDp49LEIyYmRk"  # Link permanent de grup
+PRICE_ID = "price_1RsNMwCFUXMdgQRzVlmVTBut"  # Abonament lunar Stripe
 
 stripe.api_key = STRIPE_SECRET_KEY
 
-# ---------------- LOGGING ----------------
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ---------------- HELPER FUNCTIONS ----------------
-def send_telegram_message(chat_id, text):
-    """Trimite mesaj în privat"""
-    requests.post(
-        f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
-        json={"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
-    )
-
-def kick_and_unban(user_id):
-    """Remove fără ban permanent"""
-    logger.info(f"🛑 Scoatem user {user_id} din grup...")
-    # Kick
-    requests.post(
-        f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/kickChatMember",
-        json={"chat_id": GROUP_CHAT_ID, "user_id": user_id}
-    )
-    time.sleep(1)
-    # Unban imediat
-    requests.post(
-        f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/unbanChatMember",
-        json={"chat_id": GROUP_CHAT_ID, "user_id": user_id}
-    )
-    logger.info(f"✅ User {user_id} scos și debanat imediat.")
-
-def schedule_kick(user_id, delay_seconds):
-    """Programează remove după delay_seconds"""
-    def task():
-        time.sleep(delay_seconds)
-        kick_and_unban(user_id)
-    threading.Thread(target=task, daemon=True).start()
-
-# ---------------- FLASK APP ----------------
 app = Flask(__name__)
+
+# ---------------- HELPER FUNCTIONS ----------------
+
+def send_message(chat_id, text):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    payload = {"chat_id": chat_id, "text": text}
+    requests.post(url, json=payload)
+
+def add_user_to_group(user_id):
+    mesaj_intampinare = (
+        "Bună,\n\n"
+        "⭐ Aici veți găsi conținut premium și leaks, postat de mai multe modele din România și nu numai.\n\n"
+        "⭐ Pentru a intra în grup, trebuie să vă abonați. Un abonament costă 25 RON pentru 30 de zile.\n\n"
+        "⭐ Vă mulțumim că ați ales să fiți membru al grupului nostru!\n\n"
+        f"🔗 Intră în grup aici: {INVITE_LINK}"
+    )
+    send_message(user_id, mesaj_intampinare)
+
+def remove_user_from_group(user_id):
+    # Kick
+    kick_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/kickChatMember"
+    requests.post(kick_url, json={
+        "chat_id": GROUP_CHAT_ID,
+        "user_id": user_id,
+        "until_date": int(datetime.now().timestamp()) + 60
+    })
+    # Unban
+    unban_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/unbanChatMember"
+    requests.post(unban_url, json={
+        "chat_id": GROUP_CHAT_ID,
+        "user_id": user_id
+    })
+
+# ---------------- STRIPE WEBHOOK ----------------
 
 @app.route("/stripe-webhook", methods=["POST"])
 def stripe_webhook():
-    """Primește confirmarea Stripe și trimite linkul + pornește timerul"""
     payload = request.data
     sig_header = request.headers.get("Stripe-Signature")
 
     try:
         event = stripe.Webhook.construct_event(payload, sig_header, STRIPE_WEBHOOK_SECRET)
     except Exception as e:
-        logger.error(f"⚠️ Webhook error: {str(e)}")
         return f"⚠️ Webhook error: {str(e)}", 400
 
-    if event["type"] == "checkout.session.completed":
-        session = event["data"]["object"]
-        chat_id = session.get("metadata", {}).get("telegram_chat_id")
+    event_type = event["type"]
+    data = event["data"]["object"]
 
+    logger.info(f"📢 Event primit: {event_type}")
+
+    if event_type == "checkout.session.completed":
+        chat_id = data.get("metadata", {}).get("telegram_chat_id")
         if chat_id:
-            logger.info(f"💰 Plata confirmată pentru {chat_id}")
-            send_telegram_message(chat_id, f"✅ Plata confirmată! Abonamentul tău este activ pentru 1 minut.\n\nIntră în grup aici: {INVITE_LINK}")
-            schedule_kick(int(chat_id), 60)  # scoate după 1 minut
+            add_user_to_group(int(chat_id))
+
+    elif event_type == "invoice.payment_succeeded":
+        chat_id = data.get("metadata", {}).get("telegram_chat_id")
+        if chat_id:
+            add_user_to_group(int(chat_id))
+
+    elif event_type in ["invoice.payment_failed", "customer.subscription.deleted"]:
+        chat_id = data.get("metadata", {}).get("telegram_chat_id")
+        if chat_id:
+            remove_user_from_group(int(chat_id))
 
     return "✅ Webhook received", 200
 
 # ---------------- TELEGRAM BOT ----------------
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Comanda /start - creează sesiune Stripe"""
     chat_id = update.effective_chat.id
-    logger.info(f"📩 Comanda /start de la {chat_id}")
 
-    text = (
-        "Bună,\n\n"
-        f"⭐ Abonament test: {PRICE_RON} RON / 1 minut.\n"
-        "⭐ Apasă butonul pentru a plăti."
-    )
-
+    # Creează sesiunea Stripe pentru abonament lunar
     session = stripe.checkout.Session.create(
         payment_method_types=["card"],
-        line_items=[{
-            "price_data": {
-                "currency": "ron",
-                "product_data": {"name": PRODUCT_NAME},
-                "unit_amount": int(PRICE_RON * 100),
-            },
-            "quantity": 1
-        }],
-        mode="payment",
-        success_url=SUCCESS_URL,
-        cancel_url=CANCEL_URL,
+        line_items=[{"price": PRICE_ID, "quantity": 1}],
+        mode="subscription",
+        success_url="https://t.me/EscorteRO1_bot",
+        cancel_url="https://t.me/EscorteRO1_bot",
         metadata={"telegram_chat_id": str(chat_id)}
     )
 
-    keyboard = [[InlineKeyboardButton("💳 Plătește acum", url=session.url)]]
+    keyboard = [[InlineKeyboardButton("💳 Plătește abonamentul lunar", url=session.url)]]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(text, reply_markup=reply_markup)
 
-# ---------------- RULEAZĂ ----------------
+    await update.message.reply_text(
+        "Bună,\n\n"
+        "⭐ Aici veți găsi conținut premium și leaks, postat de mai multe modele din România și nu numai.\n"
+        "⭐ Pentru a intra în grup, trebuie să vă abonați. Un abonament costă 25 RON pentru 30 de zile.\n"
+        "⭐ Pentru a vă abona, faceți clic pe butonul de mai jos.\n"
+        "⭐ Vă mulțumim că ați ales să fiți membru al grupului nostru!",
+        reply_markup=reply_markup
+    )
+
+# ---------------- RUN BOTH ----------------
+
 def run_flask():
-    """Rulează serverul Flask pentru webhook"""
     app.run(host="0.0.0.0", port=5000)
 
 if __name__ == "__main__":
