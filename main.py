@@ -17,7 +17,7 @@ STRIPE_WEBHOOK_SECRET = "whsec_S7AvDmiroK8REpBwWljjHY6p6ZCIsLGV"
 PRODUCT_NAME = "Abonament Premium 30 zile"
 PRICE_RON = 25
 SUCCESS_URL = "https://t.me/+rxM_lgKEXw85OTBk"
-CANCEL_URL = "https://t.me/+rxM_lgKEXw85OTBk"
+CANCEL_URL = "https://t.me/+rxM_lgKEXw85OTBk" 
 
 # ID grup Telegram
 GROUP_CHAT_ID = -1001234567890  # pune ID-ul real al grupului
