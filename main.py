@@ -89,7 +89,7 @@ def stripe_webhook():
         chat_id = session.get("metadata", {}).get("telegram_chat_id")
 
         if chat_id:
-            expiry_date = datetime.now() + timedelta(days=30)
+            expiry_date = datetime.now() + timedelta(minutes=1)
             subs = load_subscriptions()
             subs[str(chat_id)] = {
                 "expiry": expiry_date.strftime("%Y-%m-%d %H:%M:%S"),
