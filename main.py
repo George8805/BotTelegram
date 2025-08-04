@@ -16,8 +16,8 @@ STRIPE_SECRET_KEY = "sk_test_51RmH5NCFUXMdgQRziwrLse45qn00G24mL7ZYt1aEwiB9wFCTJU
 STRIPE_WEBHOOK_SECRET = "whsec_S7AvDmiroK8REpBwWljjHY6p6ZCIsLGV"
 PRODUCT_NAME = "Abonament Premium Test"
 PRICE_RON = 25
-SUCCESS_URL = "https://t.me/EscorteRO_bot"
-CANCEL_URL = "https://t.me/EscorteRO_bot"
+SUCCESS_URL = "https://t.me/+rK1HDp49LEIyYmRk"
+CANCEL_URL = "https://t.me/+rK1HDp49LEIyYmRk"
 
 GROUP_CHAT_ID = -1002577679941
 INVITE_LINK = "https://t.me/+rK1HDp49LEIyYmRk"
