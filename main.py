@@ -5,18 +5,25 @@ from flask import Flask, request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 import threading
+import requests
+import time
 import json
 import os
-import secrets
-import requests
 
 # ---------------- CONFIG ----------------
 TELEGRAM_TOKEN = "8285233635:AAEmE6IsunZ8AXVxJ2iVh5fa-mY0ppoKcgQ"
 STRIPE_SECRET_KEY = "sk_test_51RmH5NCFUXMdgQRziwrLse45qn00G24mL7ZYt1aEwiB9wFCTJUNcw9g8YLnVZY3k0VyQAKJdmGI0bnWa4og8qfYG00uTJvHUMQ"
-STRIPE_WEBHOOK_SECRET = "whsec_BBSUbBVkatYXc9SHUdQXPKFm5YhOE2fI"
+STRIPE_WEBHOOK_SECRET = "whsec_S7AvDmiroK8REpBwWljjHY6p6ZCIsLGV"
 PRODUCT_NAME = "Abonament Premium 30 zile"
 PRICE_RON = 25
-GROUP_ID = -1002577679941  # ID grup privat
+SUCCESS_URL = "https://t.me/numele_botului"
+CANCEL_URL = "https://t.me/numele_botului"
+
+# ID grup Telegram
+GROUP_CHAT_ID = -1001234567890  # pune ID-ul real al grupului
+
+# Fisier pentru stocarea abonamentelor
+SUBSCRIPTIONS_FILE = "subscriptions.json"
 
 stripe.api_key = STRIPE_SECRET_KEY
 
@@ -24,35 +31,45 @@ stripe.api_key = STRIPE_SECRET_KEY
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ---------------- FIȘIER ABONAȚI ----------------
-abonati_file = "abonati.json"
-if not os.path.exists(abonati_file):
-    with open(abonati_file, "w") as f:
-        json.dump({}, f)
+# ---------------- HELPER FUNCTIONS ----------------
 
-def load_abonati():
-    with open(abonati_file, "r") as f:
-        return json.load(f)
+def load_subscriptions():
+    if os.path.exists(SUBSCRIPTIONS_FILE):
+        with open(SUBSCRIPTIONS_FILE, "r") as f:
+            return json.load(f)
+    return {}
 
-def save_abonati(data):
-    with open(abonati_file, "w") as f:
+def save_subscriptions(data):
+    with open(SUBSCRIPTIONS_FILE, "w") as f:
         json.dump(data, f)
 
-# ---------------- FUNCȚII LINK ----------------
-def generate_invite_link():
-    token = secrets.token_urlsafe(8)
-    expire_date = datetime.now() + timedelta(hours=1)
-    r = requests.post(
-        f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/createChatInviteLink",
-        json={
-            "chat_id": GROUP_ID,
-            "expire_date": int(expire_date.timestamp()),
-            "member_limit": 1,
-            "name": f"Access-{token}"
-        }
-    )
-    data = r.json()
-    return data.get("result", {}).get("invite_link")
+def send_telegram_message(chat_id, text):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    payload = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
+    requests.post(url, json=payload)
+
+def create_invite_link():
+    expire_time = int(time.time()) + 300  # 5 minute
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/createChatInviteLink"
+    payload = {
+        "chat_id": GROUP_CHAT_ID,
+        "expire_date": expire_time,
+        "member_limit": 1
+    }
+    r = requests.post(url, json=payload)
+    if r.status_code == 200 and r.json().get("ok"):
+        return r.json()["result"]["invite_link"]
+    else:
+        logger.error(f"Eroare creare link: {r.text}")
+        return None
+
+def remove_user_from_group(user_id):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/kickChatMember"
+    payload = {
+        "chat_id": GROUP_CHAT_ID,
+        "user_id": user_id
+    }
+    requests.post(url, json=payload)
 
 # ---------------- FLASK APP ----------------
 app = Flask(__name__)
@@ -72,46 +89,34 @@ def stripe_webhook():
         chat_id = session.get("metadata", {}).get("telegram_chat_id")
 
         if chat_id:
-            abonati = load_abonati()
-            expiry_date = (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d %H:%M:%S")
-            abonati[str(chat_id)] = expiry_date
-            save_abonati(abonati)
+            expiry_date = datetime.now() + timedelta(days=30)
+            subs = load_subscriptions()
+            subs[str(chat_id)] = {
+                "expiry": expiry_date.strftime("%Y-%m-%d %H:%M:%S"),
+                "user_id": chat_id
+            }
+            save_subscriptions(subs)
 
-            link = generate_invite_link()
-            if link:
-                text = f"✅ Plata confirmată!\n📅 Abonament activ până la {expiry_date}\n\n🔗 Intră în grup aici: {link}"
-            else:
-                text = "✅ Plata confirmată, dar nu am putut genera linkul de acces."
-
+            text = (
+                f"✅ Plata confirmată!\n\n"
+                f"📅 Abonamentul tău este activ până la **{expiry_date.strftime('%d.%m.%Y')}**."
+            )
             send_telegram_message(chat_id, text)
 
-    return "✅ Webhook received", 200
+            invite_link = create_invite_link()
+            if invite_link:
+                send_telegram_message(chat_id, f"🔗 Intră în grup aici (valabil 5 minute / 1 utilizare):\n{invite_link}")
 
-def send_telegram_message(chat_id, text):
-    requests.post(
-        f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
-        json={"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
-    )
+    return "✅ Webhook received", 200
 
 # ---------------- TELEGRAM BOT ----------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    abonati = load_abonati()
-
-    if str(chat_id) in abonati:
-        exp_date = datetime.strptime(abonati[str(chat_id)], "%Y-%m-%d %H:%M:%S")
-        if exp_date > datetime.now():
-            link = generate_invite_link()
-            await update.message.reply_text(
-                f"✅ Ai abonament activ până la {exp_date.strftime('%d.%m.%Y')}!\n🔗 Intră în grup aici: {link}"
-            )
-            return
-
     text = (
         "Bună,\n\n"
-        "⭐ Aici veți găsi conținut premium și leaks.\n"
-        f"⭐ Un abonament costă {PRICE_RON} RON pentru 30 de zile.\n"
-        "⭐ Click pe butonul de mai jos pentru plată."
+        "⭐ Aici vei găsi conținut premium.\n"
+        f"⭐ Abonament: {PRICE_RON} RON / 30 zile.\n"
+        "⭐ Apasă pe buton pentru a plăti."
     )
 
     session = stripe.checkout.Session.create(
@@ -125,8 +130,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "quantity": 1
         }],
         mode="payment",
-        success_url="https://t.me/EscorteRO1_bot",
-        cancel_url="https://t.me/EscorteRO1_bot",
+        success_url=SUCCESS_URL,
+        cancel_url=CANCEL_URL,
         metadata={"telegram_chat_id": str(chat_id)}
     )
 
@@ -134,12 +139,32 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(text, reply_markup=reply_markup)
 
+# ---------------- JOB DE VERIFICARE ----------------
+def check_expired_subscriptions():
+    while True:
+        subs = load_subscriptions()
+        changed = False
+        for chat_id, data in list(subs.items()):
+            expiry = datetime.strptime(data["expiry"], "%Y-%m-%d %H:%M:%S")
+            if datetime.now() > expiry:
+                try:
+                    remove_user_from_group(int(chat_id))
+                    send_telegram_message(chat_id, "❌ Abonamentul tău a expirat. Pentru a reveni, plătește din nou.")
+                except Exception as e:
+                    logger.error(f"Eroare la eliminare utilizator {chat_id}: {e}")
+                del subs[chat_id]
+                changed = True
+        if changed:
+            save_subscriptions(subs)
+        time.sleep(3600)  # verifică la fiecare oră
+
 # ---------------- RULEAZĂ ----------------
 def run_flask():
     app.run(host="0.0.0.0", port=5000)
 
 if __name__ == "__main__":
     threading.Thread(target=run_flask).start()
+    threading.Thread(target=check_expired_subscriptions, daemon=True).start()
     app_telegram = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app_telegram.add_handler(CommandHandler("start", start))
     app_telegram.run_polling()
