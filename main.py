@@ -7,20 +7,19 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatMem
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, ChatMemberHandler
 import threading
 
-# ---------------- CONFIG ----------------
+# ---------------- CONFIG (live) ----------------
 TELEGRAM_TOKEN = "8285233635:AAEmE6IsunZ8AXVxJ2iVh5fa-mY0ppoKcgQ"
 
-# Stripe Live Keys
-STRIPE_SECRET_KEY = "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"
+STRIPE_SECRET_KEY   = "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"
 STRIPE_WEBHOOK_SECRET = "whsec_LxOkuricKYEikXru9KjQje65g4MNapK9"
 
-GROUP_CHAT_ID = -1002577679941  # Grup ESCORTE-ROMÂNIA❌️❌️❌️
-INVITE_LINK = "https://t.me/+rK1HDp49LEIyYmRk"  # Link permanent de grup
-PRICE_ID = "price_1RsNMwCFUXMdgQRzVlmVTBut"  # Price ID Live
+GROUP_CHAT_ID = -1002577679941
+INVITE_LINK   = "https://t.me/+rK1HDp49LEIyYmRk"   # linkul tău permanent
+PRICE_ID      = "price_1RsNMwCFUXMdgQRzVlmVTBut"   # prețul lunar
 
 stripe.api_key = STRIPE_SECRET_KEY
 
-# Mapare chat_id → subscription_id (memorie RAM, reset la restart server)
+# chat_id -> subscription_id (optim: folosit când procesul rămâne online)
 active_subscriptions = {}
 
 logging.basicConfig(level=logging.INFO)
@@ -28,38 +27,49 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# ---------------- HELPER FUNCTIONS ----------------
-
+# ---------------- HELPER ----------------
 def send_message(chat_id, text):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {"chat_id": chat_id, "text": text}
-    requests.post(url, json=payload)
+    requests.post(url, json={"chat_id": chat_id, "text": text})
 
 def add_user_to_group(user_id):
-    mesaj_intampinare = (
+    text = (
         "Bună,\n\n"
         "⭐ Aici veți găsi conținut premium și leaks, postat de mai multe modele din România și nu numai.\n\n"
         "⭐ Pentru a intra în grup, trebuie să vă abonați. Un abonament costă 25 RON pentru 30 de zile.\n\n"
         "⭐ Vă mulțumim că ați ales să fiți membru al grupului nostru!\n\n"
         f"🔗 Intră în grup aici: {INVITE_LINK}"
     )
-    send_message(user_id, mesaj_intampinare)
+    send_message(user_id, text)
 
 def remove_user_from_group(user_id):
-    kick_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/kickChatMember"
-    requests.post(kick_url, json={
-        "chat_id": GROUP_CHAT_ID,
-        "user_id": user_id,
-        "until_date": int(datetime.now().timestamp()) + 60
-    })
-    unban_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/unbanChatMember"
-    requests.post(unban_url, json={
-        "chat_id": GROUP_CHAT_ID,
-        "user_id": user_id
-    })
+    # kick + unban (remove fără block)
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/kickChatMember",
+            json={"chat_id": GROUP_CHAT_ID, "user_id": user_id, "until_date": int(datetime.now().timestamp()) + 60}
+        )
+    finally:
+        requests.post(
+            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/unbanChatMember",
+            json={"chat_id": GROUP_CHAT_ID, "user_id": user_id}
+        )
+
+def find_active_subscription_by_user(user_id: int):
+    """Caută în Stripe un abonament activ cu metadată telegram_chat_id == user_id."""
+    try:
+        res = stripe.Subscription.search(
+            # status:'active' e suficient; poți adăuga 'trialing' dacă vei folosi trial
+            query=f"metadata['telegram_chat_id']:'{user_id}' AND status:'active'",
+            limit=1,
+        )
+        if res and res.data:
+            return res.data[0].id
+    except Exception as e:
+        logger.error(f"Stripe search error: {e}")
+    return None
 
 # ---------------- STRIPE WEBHOOK ----------------
-
 @app.route("/stripe-webhook", methods=["POST"])
 def stripe_webhook():
     payload = request.data
@@ -71,65 +81,91 @@ def stripe_webhook():
         return f"⚠️ Webhook error: {str(e)}", 400
 
     event_type = event["type"]
-    data = event["data"]["object"]
+    obj = event["data"]["object"]
+    logger.info(f"📢 Stripe event: {event_type}")
 
-    logger.info(f"📢 Event primit: {event_type}")
+    def _cache(chat_id, subscription_id):
+        if chat_id and subscription_id:
+            active_subscriptions[int(chat_id)] = subscription_id
+            logger.info(f"cache map {chat_id} -> {subscription_id}")
 
-    # Plata inițială sau reînnoire
+    # 1) Checkout inițial (subscription create)
     if event_type == "checkout.session.completed":
-        chat_id = data.get("metadata", {}).get("telegram_chat_id")
-        subscription_id = data.get("subscription")
-        if chat_id and subscription_id:
-            active_subscriptions[int(chat_id)] = subscription_id
+        chat_id = obj.get("metadata", {}).get("telegram_chat_id")
+        subscription_id = obj.get("subscription")
+        # fallback: dacă nu primim sub_id (rare), îl luăm de pe latest_invoice
+        if not subscription_id and obj.get("subscription"):
+            subscription_id = obj["subscription"]
+        _cache(chat_id, subscription_id)
+        if chat_id:
             add_user_to_group(int(chat_id))
 
+    # 2) Reînnoire plătită (invoice)
     elif event_type == "invoice.payment_succeeded":
-        subscription_id = data.get("subscription")
-        chat_id = data.get("metadata", {}).get("telegram_chat_id")
-        if chat_id and subscription_id:
-            active_subscriptions[int(chat_id)] = subscription_id
+        subscription_id = obj.get("subscription")
+        chat_id = (obj.get("metadata") or {}).get("telegram_chat_id")
+        if not chat_id and subscription_id:
+            # luăm metadatele direct de pe subscription
+            try:
+                sub = stripe.Subscription.retrieve(subscription_id)
+                chat_id = (sub.get("metadata") or {}).get("telegram_chat_id")
+            except Exception as e:
+                logger.error(f"retrieve sub error: {e}")
+        _cache(chat_id, subscription_id)
+        if chat_id:
             add_user_to_group(int(chat_id))
 
-    # Plata eșuată sau abonament anulat
-    elif event_type in ["invoice.payment_failed", "customer.subscription.deleted"]:
-        chat_id = data.get("metadata", {}).get("telegram_chat_id")
+    # 3) Neplată / anulare
+    elif event_type in ("invoice.payment_failed", "customer.subscription.deleted"):
+        subscription_id = obj.get("subscription") or obj.get("id")
+        chat_id = (obj.get("metadata") or {}).get("telegram_chat_id")
+        if not chat_id and subscription_id:
+            try:
+                sub = stripe.Subscription.retrieve(subscription_id)
+                chat_id = (sub.get("metadata") or {}).get("telegram_chat_id")
+            except Exception as e:
+                logger.error(f"retrieve sub (fail/cancel) error: {e}")
         if chat_id:
             remove_user_from_group(int(chat_id))
             active_subscriptions.pop(int(chat_id), None)
 
-    return "✅ Webhook received", 200
+    return "ok", 200
 
-# ---------------- DETECTARE IEȘIRE DIN GRUP ----------------
-
+# ---------------- TELEGRAM: detect exit -> cancel sub ----------------
 async def member_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.chat_member.old_chat_member.status in ["member", "administrator"] and \
-       update.chat_member.new_chat_member.status == "left":
+    old = update.chat_member.old_chat_member.status
+    new = update.chat_member.new_chat_member.status
+    if old in ("member", "administrator") and new == "left":
         user_id = update.chat_member.from_user.id
-        logger.info(f"👋 {user_id} a ieșit singur din grup")
+        logger.info(f"👋 {user_id} a ieșit din grup; încerc să anulez abonamentul")
 
-        # Dacă are abonament activ în memorie → anulăm în Stripe
-        if user_id in active_subscriptions:
-            sub_id = active_subscriptions[user_id]
+        sub_id = active_subscriptions.get(user_id)
+        if not sub_id:
+            sub_id = find_active_subscription_by_user(user_id)
+
+        if sub_id:
             try:
                 stripe.Subscription.delete(sub_id)
-                logger.info(f"❌ Abonament {sub_id} anulat pentru user {user_id}")
                 active_subscriptions.pop(user_id, None)
+                logger.info(f"❌ Abonament {sub_id} anulat pentru {user_id}")
             except Exception as e:
-                logger.error(f"⚠️ Eroare la anularea abonamentului: {e}")
+                logger.error(f"⚠️ Anulare eșuată pentru {user_id}: {e}")
+        else:
+            logger.info("Nu am găsit abonament activ în Stripe pentru userul care a ieșit.")
 
 # ---------------- TELEGRAM BOT ----------------
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
 
-    # Creează sesiunea Stripe pentru abonament lunar
+    # scriem metadată și pe SUBSCRIPTION, nu doar pe session
     session = stripe.checkout.Session.create(
         payment_method_types=["card"],
         line_items=[{"price": PRICE_ID, "quantity": 1}],
         mode="subscription",
         success_url="https://t.me/EscorteRO1_bot",
         cancel_url="https://t.me/EscorteRO1_bot",
-        metadata={"telegram_chat_id": str(chat_id)}
+        metadata={"telegram_chat_id": str(chat_id)},
+        subscription_data={"metadata": {"telegram_chat_id": str(chat_id)}},
     )
 
     keyboard = [[InlineKeyboardButton("💳 Plătește abonamentul lunar", url=session.url)]]
@@ -144,14 +180,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=reply_markup
     )
 
-# ---------------- RUN BOTH ----------------
-
+# ---------------- RUN ----------------
 def run_flask():
     app.run(host="0.0.0.0", port=5000)
 
 if __name__ == "__main__":
-    threading.Thread(target=run_flask).start()
-    app_telegram = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-    app_telegram.add_handler(CommandHandler("start", start))
-    app_telegram.add_handler(ChatMemberHandler(member_update, ChatMemberHandler.CHAT_MEMBER))
-    app_telegram.run_polling()
+    threading.Thread(target=run_flask, daemon=True).start()
+    tg_app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+    tg_app.add_handler(CommandHandler("start", start))
+    tg_app.add_handler(ChatMemberHandler(member_update, ChatMemberHandler.CHAT_MEMBER))
+    tg_app.run_polling()
