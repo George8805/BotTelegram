@@ -28,7 +28,7 @@ STRIPE_WEBHOOK_SECRET = "whsec_LxOkuricKYEikXru9KjQje65g4MNapK9"
 
 GROUP_CHAT_ID = -1002577679941  # ESCORTE-ROMÂNIA❌️❌️❌️
 INVITE_LINK = "https://t.me/+rK1HDp49LEIyYmRk"  # link permanent
-PRICE_ID =     # abonament lunar
+     
 
 # Domeniul public al serviciului tău (același host ca pentru /webhook)
 PUBLIC_BASE_URL = "https://bottelegram-0kpv.onrender.com"
