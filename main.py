@@ -187,7 +187,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     session = stripe.checkout.Session.create(
         mode="subscription",
         payment_method_types=["card"],
-        line_items=[{"price": PRICE_ID, "quantity": 1}],
+        line_items=[{"price": PRICE_ID, "quantity": 0}],
         success_url="https://t.me/EscorteRO1_bot",
         cancel_url="https://t.me/EscorteRO1_bot",
         metadata={"telegram_chat_id": str(chat_id)},
