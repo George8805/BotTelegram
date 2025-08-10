@@ -5,7 +5,7 @@ from datetime import datetime
 
 import requests
 import stripe
-from flask import Flask, request
+from flask import Flask, request, redirect  # <— am adăugat redirect
 
 from telegram import (
     Update,
@@ -30,6 +30,9 @@ GROUP_CHAT_ID = -1002577679941  # ESCORTE-ROMÂNIA❌️❌️❌️
 INVITE_LINK = "https://t.me/+rK1HDp49LEIyYmRk"  # link permanent
 PRICE_ID = "price_1RsNMwCFUXMdgQRzVlmVTBut"     # abonament lunar
 
+# Domeniul public al serviciului tău (același host ca pentru /webhook)
+PUBLIC_BASE_URL = "https://bottelegram-0kpv.onrender.com"
+
 stripe.api_key = STRIPE_SECRET_KEY
 
 logging.basicConfig(level=logging.INFO)
@@ -40,6 +43,11 @@ app = Flask(__name__)
 # memorie volatilă (ok pentru MVP)
 active_subscriptions: dict[int, str] = {}
 
+# ---------------- Ruta de redirect (ascunde linkul real) ----------------
+@app.route("/join")
+def join_group():
+    # nu expune INVITE_LINK în Telegram — browserul redirecționează cu 302
+    return redirect(INVITE_LINK, code=302)
 
 # ---------------- Helpers ----------------
 def tg_send(chat_id: int, text: str, reply_markup=None):
@@ -56,7 +64,7 @@ def tg_send(chat_id: int, text: str, reply_markup=None):
 
 
 def add_user_flow(user_id: int):
-    # doar mesaj + buton cu link (nu afișăm URL-ul)
+    # mesaj + buton care merge pe /join (nu arătăm INVITE_LINK în Telegram)
     text = (
         "Bună,\n\n"
         "⭐ Aici veți găsi conținut premium și leaks, postat de mai multe modele din România și nu numai.\n\n"
@@ -64,7 +72,7 @@ def add_user_flow(user_id: int):
         "⭐ Vă mulțumim că ați ales să fiți membru al grupului nostru!"
     )
     kb = InlineKeyboardMarkup(
-        [[InlineKeyboardButton("🔗 Intră în grup", url=INVITE_LINK)]]
+        [[InlineKeyboardButton("🔗 Intră în grup", url=f"{PUBLIC_BASE_URL}/join")]]
     )
     tg_send(user_id, text, kb)
 
@@ -159,7 +167,6 @@ def stripe_webhook():
 
     # ❌ abonament șters/anulat – scoatem din grup
     elif etype == "customer.subscription.deleted":
-        # metadata e pe subscription (setată de noi)
         chat_id = obj.get("metadata", {}).get("telegram_chat_id")
         if chat_id:
             remove_user_from_group(int(chat_id))
@@ -177,7 +184,6 @@ def health():
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
 
-    # creăm Checkout Session pentru SUBSCRIPTION și împingem metadata la subscription
     session = stripe.checkout.Session.create(
         mode="subscription",
         payment_method_types=["card"],
@@ -204,14 +210,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def on_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Detectează când un membru părăsește grupul și anulează abonamentul."""
     u: ChatMemberUpdated = update.chat_member
-    # doar pentru grupul tău
     if u.chat.id != GROUP_CHAT_ID:
         return
 
     old = u.old_chat_member.status
     new = u.new_chat_member.status
 
-    # a fost membru/admin și acum e "left" sau "kicked"
     if old in ("member", "administrator") and new in ("left", "kicked"):
         user_id = u.from_user.id
         logger.info(f"User {user_id} a părăsit grupul -> anulare abonament")
@@ -223,13 +227,10 @@ def run_flask():
 
 
 if __name__ == "__main__":
-    # pornește Flask
     threading.Thread(target=run_flask, daemon=True).start()
 
-    # pornește botul
     application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     application.add_handler(CommandHandler("start", start))
-    # primim update-uri de membership (ai Privacy Mode dezactivat – perfect)
     application.add_handler(ChatMemberHandler(on_chat_member, ChatMemberHandler.CHAT_MEMBER))
     application.add_handler(ChatMemberHandler(on_chat_member, ChatMemberHandler.MY_CHAT_MEMBER))
     application.run_polling(drop_pending_updates=True)
