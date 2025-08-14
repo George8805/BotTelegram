@@ -23,7 +23,7 @@ from telegram.ext import (
 # ---------------- CONFIG (valorile tale reale) ----------------
 TELEGRAM_TOKEN = "8285233635:AAEmE6IsunZ8AXVxJ2iVh5fa-mY0ppoKcgQ"
 
-STRIPE_SECRET_KEY = "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"
+STRIPE_SECRET_KEY = "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"
 STRIPE_WEBHOOK_SECRET = "whsec_LxOkuricKYEikXru9KjQje65g4MNapK9"
 
 GROUP_CHAT_ID = -1002577679941  # ESCORTE-ROMÂNIA❌️❌️❌️
