@@ -71,6 +71,7 @@ def add_user_flow(user_id: int):
     tg_send(user_id, text, kb)
 
 def remove_user_from_group(user_id: int):
+    # kick (ban temporar 60s) + unban pentru a permite re-intrarea pe link
     kick_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/kickChatMember"
     requests.post(
         kick_url,
@@ -89,13 +90,13 @@ def remove_user_from_group(user_id: int):
     )
 
 def cancel_stripe_subscription_for_chat(chat_id: int):
-    """Anulează abonamentul și oprește facturarea viitoare."""
+    """Anulează abonamentul și oprește facturarea viitoare, pe baza metadata.telegram_chat_id."""
     try:
         query = f"metadata['telegram_chat_id']:'{chat_id}' AND status:'active'"
         page = stripe.Subscription.search(query=query, limit=1)
         if page and page.data:
             sub = page.data[0]
-            # anulare imediată
+            # Anulare imediată
             stripe.Subscription.delete(sub.id)
             logger.info(f"Abonament {sub.id} ANULAT pentru chat {chat_id}")
             active_subscriptions.pop(chat_id, None)
@@ -104,6 +105,30 @@ def cancel_stripe_subscription_for_chat(chat_id: int):
     except Exception as e:
         logger.exception(f"Eroare la anularea abonamentului: {e}")
     return False
+
+def _get_chat_id_from_subscription(subscription_id: str) -> int | None:
+    """Helper: extrage telegram_chat_id din metadata subscription-ului."""
+    try:
+        sub = stripe.Subscription.retrieve(subscription_id)
+        meta = (sub.get("metadata") or {})
+        chat_id_str = meta.get("telegram_chat_id")
+        if chat_id_str:
+            return int(chat_id_str)
+    except Exception as e:
+        logger.warning(f"Nu pot citi metadata din subscription {subscription_id}: {e}")
+    return None
+
+def _get_chat_id_from_customer(customer_id: str) -> int | None:
+    """Fallback: extrage telegram_chat_id din metadata Customer-ului."""
+    try:
+        cust = stripe.Customer.retrieve(customer_id)
+        meta = (cust.get("metadata") or {})
+        chat_id_str = meta.get("telegram_chat_id")
+        if chat_id_str:
+            return int(chat_id_str)
+    except Exception as e:
+        logger.warning(f"Nu pot citi metadata din customer {customer_id}: {e}")
+    return None
 
 # ---------------- Stripe webhook ----------------
 @app.route("/stripe-webhook", methods=["POST"])
@@ -124,34 +149,71 @@ def stripe_webhook():
     logger.info(f"Stripe event: {etype}")
 
     if etype == "checkout.session.completed":
+        # Legăm ferm atât SUBSCRIPTION cât și CUSTOMER de chat_id-ul UTILIZATORULUI
         chat_id = obj.get("metadata", {}).get("telegram_chat_id")
         subscription_id = obj.get("subscription")
-        if chat_id and subscription_id:
-            try:
-                stripe.Subscription.modify(
-                    subscription_id,
-                    metadata={"telegram_chat_id": str(chat_id)},
-                )
-            except Exception as e:
-                logger.warning(f"Nu am putut seta metadata: {e}")
-            active_subscriptions[int(chat_id)] = subscription_id
-            add_user_flow(int(chat_id))
+        customer_id = obj.get("customer")
+
+        if chat_id:
+            # 1) atașează pe Customer (ca să-l vezi în Dashboard și ca fallback la evenimente)
+            if customer_id:
+                try:
+                    stripe.Customer.modify(
+                        customer_id,
+                        metadata={"telegram_chat_id": str(chat_id)},
+                    )
+                except Exception as e:
+                    logger.warning(f"Nu am putut seta metadata pe customer {customer_id}: {e}")
+
+            # 2) atașează pe Subscription (sursa principală de adevăr)
+            if subscription_id:
+                try:
+                    stripe.Subscription.modify(
+                        subscription_id,
+                        metadata={"telegram_chat_id": str(chat_id)},
+                    )
+                except Exception as e:
+                    logger.warning(f"Nu am putut seta metadata pe subscription {subscription_id}: {e}")
+                active_subscriptions[int(chat_id)] = subscription_id
+                add_user_flow(int(chat_id))
 
     elif etype == "invoice.payment_succeeded":
-        chat_id = obj.get("metadata", {}).get("telegram_chat_id")
+        # Preferăm subscription -> metadata; dacă lipsește, cădem pe customer -> metadata
         sub_id = obj.get("subscription")
-        if chat_id and sub_id:
+        customer_id = obj.get("customer")
+
+        chat_id = None
+        if sub_id:
+            chat_id = _get_chat_id_from_subscription(sub_id)
+        if chat_id is None and customer_id:
+            chat_id = _get_chat_id_from_customer(customer_id)
+
+        if chat_id is not None and sub_id:
             active_subscriptions[int(chat_id)] = sub_id
             add_user_flow(int(chat_id))
 
     elif etype == "invoice.payment_failed":
-        chat_id = obj.get("metadata", {}).get("telegram_chat_id")
-        if chat_id:
+        # Non-fonduri: kick imediat + unban + anulare abonament
+        sub_id = obj.get("subscription")
+        customer_id = obj.get("customer")
+
+        chat_id = None
+        if sub_id:
+            chat_id = _get_chat_id_from_subscription(sub_id)
+        if chat_id is None and customer_id:
+            chat_id = _get_chat_id_from_customer(customer_id)
+
+        if chat_id is not None:
             cancel_stripe_subscription_for_chat(int(chat_id))
             remove_user_from_group(int(chat_id))
 
     elif etype == "customer.subscription.deleted":
-        chat_id = obj.get("metadata", {}).get("telegram_chat_id")
+        # Se declanșează inclusiv când noi anulăm; scoatem din grup și curățăm cache-ul
+        meta = obj.get("metadata") or {}
+        chat_id = meta.get("telegram_chat_id")
+        if not chat_id and obj.get("customer"):
+            # fallback: dacă Stripe nu a returnat metadata pe obj, încercăm din customer
+            chat_id = _get_chat_id_from_customer(obj["customer"])
         if chat_id:
             remove_user_from_group(int(chat_id))
             active_subscriptions.pop(int(chat_id), None)
@@ -165,6 +227,7 @@ def health():
 # ---------------- Telegram ----------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
+    # Creăm sesiune de checkout pentru UTILIZATOR (chat_id în metadata)
     session = stripe.checkout.Session.create(
         mode="subscription",
         payment_method_types=["card"],
@@ -173,6 +236,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         cancel_url="https://t.me/EscorteRO1_bot",
         metadata={"telegram_chat_id": str(chat_id)},
         subscription_data={"metadata": {"telegram_chat_id": str(chat_id)}},
+        # opțional: forțează creare customer nou, util în unele org-uri
+        # customer_creation="always",
     )
     msg = (
         "Bună,\n\n"
@@ -195,11 +260,13 @@ async def on_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     old = u.old_chat_member.status
     new = u.new_chat_member.status
 
+    # Identificăm CORECT utilizatorul afectat (nu pe cel care a produs evenimentul)
+    affected_user_id = u.new_chat_member.user.id
+
     if old in ("member", "administrator") and new in ("left", "kicked"):
-        user_id = u.from_user.id
-        logger.info(f"User {user_id} a părăsit grupul -> anulare abonament")
-        cancel_stripe_subscription_for_chat(user_id)
-        remove_user_from_group(user_id)
+        logger.info(f"User {affected_user_id} a părăsit/kick grupul -> anulare abonament")
+        cancel_stripe_subscription_for_chat(affected_user_id)
+        remove_user_from_group(affected_user_id)
 
 def run_flask():
     app.run(host="0.0.0.0", port=5000)
