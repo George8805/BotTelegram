@@ -238,4 +238,21 @@ async def on_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if u.chat.id != GROUP_CHAT_ID:
         return
 
-    old_status = u.old_chat_m_
+    old_status = u.old_chat_member.status
+    new_status = u.new_chat_member.status
+    affected_user_id = u.old_chat_member.user.id  # cel care a ieșit
+
+    if old_status in ("member", "administrator") and new_status in ("left", "kicked"):
+        logger.info(f"User {affected_user_id} a părăsit grupul -> anulare abonament")
+        cancel_stripe_subscription_for_chat(affected_user_id)
+        remove_user_from_group(affected_user_id)
+
+def run_flask():
+    app.run(host="0.0.0.0", port=5000)
+
+if __name__ == "__main__":
+    threading.Thread(target=run_flask, daemon=True).start()
+    application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(ChatMemberHandler(on_chat_member, ChatMemberHandler.CHAT_MEMBER))
+    application.run_polling(drop_pending_updates=True)
