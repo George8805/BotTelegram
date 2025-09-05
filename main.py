@@ -31,9 +31,6 @@ STRIPE_WEBHOOK_SECRET = "whsec_LxOkuricKYEikXru9KjQje65g4MNapK9"
 GROUP_CHAT_ID = -1002577679941
 PRICE_ID = "price_1RsNMwCFUXMdgQRzVlmVTBut"
 
-# PUBLIC_BASE_URL nu mai e folosit pentru join (fără redirect)
-PUBLIC_BASE_URL = "https://bottelegram-0kpv.onrender.com"
-
 stripe.api_key = STRIPE_SECRET_KEY
 
 logging.basicConfig(level=logging.INFO)
@@ -82,7 +79,7 @@ def _del_after(chat_id: int, message_id: int, ttl: int):
 def tg_send_temp(chat_id: int, text: str, reply_markup=None, ttl_seconds: int = 600):
     """
     Trimite un mesaj și îl șterge automat după ttl_seconds (default: 10 minute).
-    Funcționează în DM; în grup, botul trebuie să fie admin cu can_delete_messages.
+    Linkurile NU apar în text — doar în butoane.
     """
     resp = tg_send(chat_id, text, reply_markup)
     if resp.get("ok") and "result" in resp and "message_id" in resp["result"]:
@@ -113,8 +110,7 @@ def ban_then_unban(user_id: int):
         "user_id": user_id,
         "until_date": int(time.time()) + 60,
     })
-    # mic delay ca să se propage ban-ul
-    time.sleep(1.5)
+    time.sleep(1.5)  # mic delay ca să se propage ban-ul
     # UNBAN (permite re-intrarea când abonamentul devine valid)
     tg_call("unbanChatMember", {
         "chat_id": GROUP_CHAT_ID,
@@ -126,19 +122,23 @@ def ban_then_unban(user_id: int):
 def send_dynamic_invite(user_id: int, hours_valid: int = 24):
     """
     Generează link unic (1 utilizare), îl salvează și îl trimite în DM ca mesaj TEMPORAR.
-    Linkul NU apare în text, doar în butonul inline.
+    NU afișează linkul în text — doar în buton.
     """
     invite = tg_create_invite_link(hours_valid=hours_valid, member_limit=1)
     if not invite:
         logger.warning(f"[INVITE] Nu am putut crea link pentru user {user_id}")
-        tg_send_temp(user_id, "Nu pot genera linkul unic acum. Încearcă în câteva minute.", ttl_seconds=60)
+        # mesaj scurt, fără linkuri, temporar
+        tg_send_temp(user_id, "Momentan nu pot genera linkul. Te rog încearcă din nou.", ttl_seconds=600)
         return
     active_invites[user_id] = invite
+
+    # Păstrăm exact stilul tău, fără mențiuni despre „o utilizare” sau „expiră”:
     text = (
-        "⭐ Acces în grup (link unic, 1 utilizare, expiră în 24h).\n"
-        "Acest mesaj se va șterge automat în 10 minute."
+        "Bună,\n\n"
+        "⭐ Aici veți găsi conținut premium și leaks, postat de mai multe modele din România și nu numai.\n\n"
+        "⭐ Abonamentul este 25 RON / 30 zile.\n\n"
+        "⭐ Apasă butonul de mai jos pentru a intra în grup."
     )
-    # Linkul este DOAR în butonul de mai jos (mascat)
     kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔗 Intră în grup", url=invite)]])
     tg_send_temp(user_id, text, kb, ttl_seconds=600)
 
@@ -209,7 +209,7 @@ def stripe_webhook():
         subscription_id = obj.get("subscription")
         customer_id = obj.get("customer")
         if chat_id:
-            # backfill metadata pe customer + subscription (siguranță)
+            # asigură-te că user_id e scris pe customer + subscription
             if customer_id:
                 try:
                     stripe.Customer.modify(customer_id, metadata={"telegram_chat_id": str(chat_id)})
@@ -221,7 +221,7 @@ def stripe_webhook():
                 except Exception as e:
                     logger.warning(f"Nu am putut seta metadata pe subscription {subscription_id}: {e}")
                 active_subscriptions[int(chat_id)] = subscription_id
-            # TRIMITE LINK UNIC ca MESAJ TEMPORAR (10 min)
+            # TRIMITE LINK UNIC ca MESAJ TEMPORAR (10 min), linkul e doar în buton
             send_dynamic_invite(int(chat_id), hours_valid=24)
 
     elif etype == "invoice.payment_succeeded":
@@ -235,7 +235,7 @@ def stripe_webhook():
         if chat_id is not None:
             if sub_id:
                 active_subscriptions[int(chat_id)] = sub_id
-            # retrimite link unic (dacă are nevoie să reintre) ca MESAJ TEMPORAR (10 min)
+            # Retrimite invitație (dacă are nevoie să reintre) — mesaj temporar 10 min
             send_dynamic_invite(int(chat_id), hours_valid=24)
 
     elif etype == "invoice.payment_failed":
@@ -260,7 +260,7 @@ def stripe_webhook():
         if not chat_id and obj.get("customer"):
             chat_id = _get_chat_id_from_customer(obj["customer"])
         if chat_id:
-            # revocă ultimul link (nu-l mai poate refolosi după ieșire)
+            # revocă ultimul link, apoi ban→unban
             last = active_invites.pop(int(chat_id), None)
             if last:
                 tg_revoke_invite_link(last)
@@ -285,15 +285,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         metadata={"telegram_chat_id": str(chat_id)},
         subscription_data={"metadata": {"telegram_chat_id": str(chat_id)}},
     )
+    # Textul tău de prezentare — fără alte mențiuni
     msg = (
-        "⭐ Aici veți găsi conținut premium și leaks.\n"
-        "⭐ Abonament: 25 RON / 30 zile.\n\n"
-        "Apasă butonul pentru a plăti. Acest mesaj se va șterge automat în 10 minute."
+        "Bună,\n\n"
+        "⭐ Aici veți găsi conținut premium și leaks, postat de mai multe modele din România și nu numai.\n\n"
+        "⭐ Pentru a intra în grup, trebuie să vă abonați. Un abonament costă 25 RON pentru 30 de zile.\n\n"
+        "⭐ Pentru a vă abona, faceți clic pe butonul de mai jos.\n\n"
+        "⭐ Vă mulțumim că ați ales să fiți membru al grupului nostru!"
     )
-    kb = InlineKeyboardMarkup(
-        [[InlineKeyboardButton("💳 Plătește abonamentul lunar", url=session.url)]]
-    )
-    # Mesaj TEMPORAR: 10 minute
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("💳 Plătește abonamentul lunar", url=session.url)]])
+    # Mesaj TEMPORAR: 10 minute (link doar în buton)
     tg_send_temp(chat_id, msg, kb, ttl_seconds=600)
 
 async def on_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -327,5 +328,4 @@ if __name__ == "__main__":
     application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     application.add_handler(CommandHandler("start", start))
     application.add_handler(ChatMemberHandler(on_chat_member, ChatMemberHandler.CHAT_MEMBER))
-    # primim evenimente chat_member
     application.run_polling(drop_pending_updates=True, allowed_updates=["chat_member","message"])
