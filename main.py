@@ -23,7 +23,7 @@ from telegram.ext import (
 )
 
 # ---------------- CONFIG ----------------
-TELEGRAM_TOKEN = "AAFKCkwIw3RTIVDBvkksPV6BnOHFYfct2zM"
+TELEGRAM_TOKEN = "8285233635:AAFKCkwIw3RTIVDBvkksPV6BnOHFYfct2zM"
 
 STRIPE_SECRET_KEY = "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"
 STRIPE_WEBHOOK_SECRET = "whsec_LxOkuricKYEikXru9KjQje65g4MNapK9"
