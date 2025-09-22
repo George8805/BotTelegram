@@ -31,18 +31,16 @@ STRIPE_WEBHOOK_SECRET = "whsec_LxOkuricKYEikXru9KjQje65g4MNapK9"
 GROUP_CHAT_ID = -1002577679941
 PRICE_ID = "price_1RsNMwCFUXMdgQRzVlmVTBut"
 
-# Set Stripe API key
 stripe.api_key = STRIPE_SECRET_KEY
 
-# Logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("escorte-bot")
 
 app = Flask(__name__)
 
-# mapăm ultimul link emis per user, pentru a-l revoca la ieșire/neplată
-active_invites: dict[int, str] = {}
-active_subscriptions: dict[int, str] = {}
+# ---------------- STATE ----------------
+active_invites: dict[int, str] = {}      # ultimul link emis per user
+active_subscriptions: dict[int, str] = {}  # sub-id per user
 
 # ===================== Telegram helpers =====================
 def tg_call(method: str, payload: dict):
@@ -81,7 +79,6 @@ def _del_after(chat_id: int, message_id: int, ttl: int):
 def tg_send_temp(chat_id: int, text: str, reply_markup=None, ttl_seconds: int = 600):
     """
     Trimite un mesaj și îl șterge automat după ttl_seconds (default: 10 minute).
-    Linkurile NU apar în text — doar în butoane.
     """
     resp = tg_send(chat_id, text, reply_markup)
     if resp.get("ok") and "result" in resp and "message_id" in resp["result"]:
@@ -94,8 +91,8 @@ def tg_create_invite_link(hours_valid: int = 24, member_limit: int = 1) -> str |
     expire_date = int((datetime.utcnow() + timedelta(hours=hours_valid)).timestamp())
     payload = {
         "chat_id": GROUP_CHAT_ID,
-        "member_limit": member_limit,    # one-time
-        "expire_date": expire_date,      # expiră automat
+        "member_limit": member_limit,
+        "expire_date": expire_date,
     }
     j = tg_call("createChatInviteLink", payload)
     if j.get("ok") and "result" in j and "invite_link" in j["result"]:
@@ -106,35 +103,30 @@ def tg_revoke_invite_link(invite_link: str):
     tg_call("revokeChatInviteLink", {"chat_id": GROUP_CHAT_ID, "invite_link": invite_link})
 
 def ban_then_unban(user_id: int):
-    # BAN 60s (forțează „kick”)
     tg_call("banChatMember", {
         "chat_id": GROUP_CHAT_ID,
         "user_id": user_id,
         "until_date": int(time.time()) + 60,
     })
-    time.sleep(1.5)  # mic delay ca să se propage ban-ul
-    # UNBAN (permite re-intrarea când abonamentul devine valid)
+    time.sleep(1.5)
     tg_call("unbanChatMember", {
         "chat_id": GROUP_CHAT_ID,
         "user_id": user_id,
         "only_if_banned": False,
     })
 
-# ===================== Invite flow (link mascat în buton) =====================
+# ===================== Invite flow =====================
 def send_dynamic_invite(user_id: int, hours_valid: int = 24):
     """
     Generează link unic (1 utilizare), îl salvează și îl trimite în DM ca mesaj TEMPORAR.
-    NU afișează linkul în text — doar în buton.
     """
     invite = tg_create_invite_link(hours_valid=hours_valid, member_limit=1)
     if not invite:
         logger.warning(f"[INVITE] Nu am putut crea link pentru user {user_id}")
-        # mesaj scurt, fără linkuri, temporar
         tg_send_temp(user_id, "Momentan nu pot genera linkul. Te rog încearcă din nou.", ttl_seconds=600)
         return
     active_invites[user_id] = invite
 
-    # Păstrăm exact stilul tău, fără mențiuni despre „o utilizare” sau „expiră”:
     text = (
         "Bună,\n\n"
         "⭐ Aici veți găsi conținut premium și leaks, postat de mai multe modele din România și nu numai.\n\n"
@@ -146,14 +138,14 @@ def send_dynamic_invite(user_id: int, hours_valid: int = 24):
 
 # ===================== Stripe helpers =====================
 def cancel_stripe_subscription_for_chat(chat_id: int):
-    """Anulează abonamentul și oprește facturarea viitoare (imediat)."""
+    """Anulează abonamentul și oprește facturarea viitoare."""
     try:
         query = f"metadata['telegram_chat_id']:'{chat_id}' AND status:'active'"
         page = stripe.Subscription.search(query=query, limit=100)
         found = False
         for sub in page.auto_paging_iter():
             try:
-                stripe.Subscription.delete(sub.id, prorate=False)  # anulare acum
+                stripe.Subscription.delete(sub.id, prorate=False)
                 logger.info(f"[STRIPE] Abonament {sub.id} ANULAT pentru chat {chat_id}")
                 found = True
             except Exception as e:
@@ -165,28 +157,6 @@ def cancel_stripe_subscription_for_chat(chat_id: int):
     except Exception as e:
         logger.exception(f"[STRIPE] Eroare la căutare subs: {e}")
         return False
-
-def _get_chat_id_from_subscription(subscription_id: str) -> int | None:
-    try:
-        sub = stripe.Subscription.retrieve(subscription_id)
-        meta = (sub.get("metadata") or {})
-        chat_id_str = meta.get("telegram_chat_id")
-        if chat_id_str:
-            return int(chat_id_str)
-    except Exception as e:
-        logger.warning(f"Nu pot citi metadata din subscription {subscription_id}: {e}")
-    return None
-
-def _get_chat_id_from_customer(customer_id: str) -> int | None:
-    try:
-        cust = stripe.Customer.retrieve(customer_id)
-        meta = (cust.get("metadata") or {})
-        chat_id_str = meta.get("telegram_chat_id")
-        if chat_id_str:
-            return int(chat_id_str)
-    except Exception as e:
-        logger.warning(f"Nu pot citi metadata din customer {customer_id}: {e}")
-    return None
 
 # ===================== Stripe webhook =====================
 @app.route("/stripe-webhook", methods=["POST"])
@@ -208,49 +178,12 @@ def stripe_webhook():
 
     if etype == "checkout.session.completed":
         chat_id = obj.get("metadata", {}).get("telegram_chat_id")
-        subscription_id = obj.get("subscription")
-        customer_id = obj.get("customer")
         if chat_id:
-            if customer_id:
-                try:
-                    stripe.Customer.modify(
-                        customer_id,
-                        metadata={"telegram_chat_id": str(chat_id)},
-                    )
-                except Exception as e:
-                    logger.warning(f"Nu am putut seta metadata pe customer {customer_id}: {e}")
-            if subscription_id:
-                try:
-                    stripe.Subscription.modify(
-                        subscription_id,
-                        metadata={"telegram_chat_id": str(chat_id)},
-                    )
-                except Exception as e:
-                    logger.warning(f"Nu am putut seta metadata pe subscription {subscription_id}: {e}")
-                active_subscriptions[int(chat_id)] = subscription_id
-                send_dynamic_invite(int(chat_id), hours_valid=24)
-
-    elif etype == "invoice.payment_succeeded":
-        sub_id = obj.get("subscription")
-        customer_id = obj.get("customer")
-        chat_id = None
-        if sub_id:
-            chat_id = _get_chat_id_from_subscription(sub_id)
-        if chat_id is None and customer_id:
-            chat_id = _get_chat_id_from_customer(customer_id)
-        if chat_id is not None and sub_id:
-            active_subscriptions[int(chat_id)] = sub_id
-            send_dynamic_invite(int(chat_id), hours_valid=24)
+            send_dynamic_invite(int(chat_id))
 
     elif etype == "invoice.payment_failed":
-        sub_id = obj.get("subscription")
-        customer_id = obj.get("customer")
-        chat_id = None
-        if sub_id:
-            chat_id = _get_chat_id_from_subscription(sub_id)
-        if chat_id is None and customer_id:
-            chat_id = _get_chat_id_from_customer(customer_id)
-        if chat_id is not None:
+        chat_id = obj.get("metadata", {}).get("telegram_chat_id")
+        if chat_id:
             cancel_stripe_subscription_for_chat(int(chat_id))
             last = active_invites.pop(int(chat_id), None)
             if last:
@@ -258,10 +191,7 @@ def stripe_webhook():
             ban_then_unban(int(chat_id))
 
     elif etype == "customer.subscription.deleted":
-        meta = obj.get("metadata") or {}
-        chat_id = meta.get("telegram_chat_id")
-        if not chat_id and obj.get("customer"):
-            chat_id = _get_chat_id_from_customer(obj["customer"])
+        chat_id = obj.get("metadata", {}).get("telegram_chat_id")
         if chat_id:
             last = active_invites.pop(int(chat_id), None)
             if last:
@@ -275,7 +205,7 @@ def stripe_webhook():
 def health():
     return "ok", 200
 
-# ---------------- Telegram ----------------
+# ===================== Telegram =====================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     session = stripe.checkout.Session.create(
@@ -290,27 +220,24 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = (
         "Bună,\n\n"
         "⭐ Aici veți găsi conținut premium și leaks, postat de mai multe modele din România și nu numai.\n"
+        
         "⭐ Pentru a intra în grup, trebuie să vă abonați. Un abonament costă 25 RON pentru 30 de zile.\n"
+        
         "⭐ Pentru a vă abona, faceți clic pe butonul de mai jos.\n"
+        
         "⭐ Vă mulțumim că ați ales să fiți membru al grupului nostru!"
     )
-    kb = InlineKeyboardMarkup(
-        [[InlineKeyboardButton("💳 Plătește abonamentul lunar", url=session.url)]]
-    )
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("💳 Plătește abonamentul lunar", url=session.url)]])
     await update.message.reply_text(msg, reply_markup=kb)
 
 async def on_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Anulează abonamentul dacă utilizatorul părăsește grupul."""
     u: ChatMemberUpdated = update.chat_member
     if u.chat.id != GROUP_CHAT_ID:
         return
-
     old_status = u.old_chat_member.status
     new_status = u.new_chat_member.status
-    affected_user_id = u.old_chat_member.user.id  # cel care a ieșit
-
+    affected_user_id = u.old_chat_member.user.id
     if old_status in ("member", "administrator") and new_status in ("left", "kicked"):
-        logger.info(f"User {affected_user_id} a părăsit grupul -> anulare abonament")
         cancel_stripe_subscription_for_chat(affected_user_id)
         last = active_invites.pop(int(affected_user_id), None)
         if last:
