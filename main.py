@@ -77,9 +77,7 @@ def _del_after(chat_id: int, message_id: int, ttl: int):
         logger.warning(f"[TG] delete after TTL failed for {chat_id}/{message_id}: {e}")
 
 def tg_send_temp(chat_id: int, text: str, reply_markup=None, ttl_seconds: int = 600):
-    """
-    Trimite un mesaj și îl șterge automat după ttl_seconds (default: 10 minute).
-    """
+    """Trimite un mesaj și îl șterge automat după ttl_seconds (default: 10 minute)."""
     resp = tg_send(chat_id, text, reply_markup)
     if resp.get("ok") and "result" in resp and "message_id" in resp["result"]:
         mid = resp["result"]["message_id"]
@@ -117,9 +115,7 @@ def ban_then_unban(user_id: int):
 
 # ===================== Invite flow =====================
 def send_dynamic_invite(user_id: int, hours_valid: int = 24):
-    """
-    Generează link unic (1 utilizare), îl salvează și îl trimite în DM ca mesaj TEMPORAR.
-    """
+    """Generează link unic (1 utilizare), îl salvează și îl trimite în DM ca mesaj TEMPORAR."""
     invite = tg_create_invite_link(hours_valid=hours_valid, member_limit=1)
     if not invite:
         logger.warning(f"[INVITE] Nu am putut crea link pentru user {user_id}")
@@ -220,17 +216,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = (
         "Bună,\n\n"
         "⭐ Aici veți găsi conținut premium și leaks, postat de mai multe modele din România și nu numai.\n"
-        
         "⭐ Pentru a intra în grup, trebuie să vă abonați. Un abonament costă 25 RON pentru 30 de zile.\n"
-        
         "⭐ Pentru a vă abona, faceți clic pe butonul de mai jos.\n"
-        
         "⭐ Vă mulțumim că ați ales să fiți membru al grupului nostru!"
     )
     kb = InlineKeyboardMarkup([[InlineKeyboardButton("💳 Plătește abonamentul lunar", url=session.url)]])
     await update.message.reply_text(msg, reply_markup=kb)
 
 async def on_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Anulează abonamentul și revocă linkul când utilizatorul iese din grup"""
     u: ChatMemberUpdated = update.chat_member
     if u.chat.id != GROUP_CHAT_ID:
         return
@@ -238,6 +232,7 @@ async def on_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     new_status = u.new_chat_member.status
     affected_user_id = u.old_chat_member.user.id
     if old_status in ("member", "administrator") and new_status in ("left", "kicked"):
+        logger.info(f"[CHAT] User {affected_user_id} a ieșit din grup -> anulare + ban/unban + revoke")
         cancel_stripe_subscription_for_chat(affected_user_id)
         last = active_invites.pop(int(affected_user_id), None)
         if last:
